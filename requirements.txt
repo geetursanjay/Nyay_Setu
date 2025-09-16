@@ -4,4 +4,4 @@ gTTS
 rapidfuzz
 openai
 openpyxl
-streamlit-mic-recorder
+
