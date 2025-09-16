@@ -104,7 +104,7 @@ st.markdown(
         <span class="symbol">⚖️</span>
         <h1>Nyayasetu - AI Legal Consultant</h1>
     </div>
-    <p style='text-align:center; color: #FFFFFF; text-shadow: 1px 1px 2px #000000;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
+    <p style='text-align:center; color: #FFFFFF; text-shadow: 1px 1px 2px #FFFFFF;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
     """,
     unsafe_allow_html=True
 )
