@@ -18,11 +18,23 @@ st.markdown(
 
     /* Apply a background image and style */
     .stApp {
-        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
+        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/bg.png");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: fixed;
-        background-position: center center; /* This is the new line */
+        background-position: center center;
+    }
+    
+    /* Add a semi-transparent overlay to the entire app */
+    .stApp::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent black overlay */
+        z-index: -1;
     }
     .main-header {
         display: flex;
@@ -36,11 +48,12 @@ st.markdown(
     .main-header h1 {
         font-size: 3.5rem; /* Larger font size for the title */
         font-weight: 700;
-        text-shadow: 2px 2px 4px #000000;
+        text-shadow: 2px 2px 4px #FFFFFF; /* Changed text shadow to white for better contrast */
     }
-    .main-header img {
-        width: 100px; /* Adjust image size */
-        height: auto;
+    .main-header .symbol {
+        font-size: 3.5rem; /* Increased size of the symbol to match the title */
+        color: #FFD700; /* Gold color for the symbol */
+        text-shadow: 2px 2px 4px #000000;
     }
     .st-emotion-cache-1cypd85 {
         background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
@@ -91,7 +104,7 @@ st.markdown(
         <span class="symbol">⚖️</span>
         <h1>Nyayasetu - AI Legal Consultant</h1>
     </div>
-    <p style='text-align:center;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
+    <p style='text-align:center; color: #FFFFFF; text-shadow: 1px 1px 2px #000000;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
     """,
     unsafe_allow_html=True
 )
@@ -135,13 +148,18 @@ for i, query in enumerate(example_queries):
 # -------------------------------
 # User Input
 # -------------------------------
-user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
+input_col, button_col = st.columns([4, 1])
+
+with input_col:
+    user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
+
+with button_col:
+    st.markdown("<br>", unsafe_allow_html=True) # Add some spacing to align the button
+    submitted = st.button("Get Answer")
 
 # -------------------------------
 # Fetch Answer
 # -------------------------------
-submitted = st.button("Get Answer")
-
 if submitted and st.session_state.get('user_question'):
     with st.spinner("Searching for your answer..."):
         queries = df[col_name].dropna().tolist()
