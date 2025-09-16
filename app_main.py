@@ -22,6 +22,7 @@ st.markdown(
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: fixed;
+        background-position: center center; /* This is the new line */
     }
     .main-header {
         display: flex;
@@ -37,10 +38,9 @@ st.markdown(
         font-weight: 700;
         text-shadow: 2px 2px 4px #000000;
     }
-    .main-header .symbol {
-        font-size: 3rem; /* Size of the symbol */
-        color: #FFD700; /* Gold color for the symbol */
-        text-shadow: 2px 2px 4px #000000;
+    .main-header img {
+        width: 100px; /* Adjust image size */
+        height: auto;
     }
     .st-emotion-cache-1cypd85 {
         background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
