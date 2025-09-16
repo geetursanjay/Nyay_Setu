@@ -1,9 +1,7 @@
 streamlit
 pandas
 gTTS
-SpeechRecognition
 rapidfuzz
 openai
 openpyxl
 streamlit-mic-recorder
-
