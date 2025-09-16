@@ -1,17 +1,10 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import tempfile
-import os
 from io import BytesIO
 import speech_recognition as sr
 from rapidfuzz import process, fuzz
+from mic_recorder_streamlit import mic_recorder
 
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
@@ -21,6 +14,7 @@ st.set_page_config(layout="wide")
 # -------------------------------
 @st.cache_data
 def load_data():
+    """Loads the dataset from an Excel file and caches it."""
     try:
         df = pd.read_excel("SIH_Dataset_Final.xlsx")
         return df
@@ -41,6 +35,7 @@ language_map = {
     "Tamil": "ta",
     "Telugu": "te"
 }
+
 # Initialize session state for the user question
 if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
@@ -58,7 +53,6 @@ st.markdown("---")
 with st.sidebar:
     st.header("Settings")
     selected_lang_display = st.selectbox("Select language:", list(language_map.keys()))
-    selected_lang_code = language_map[selected_lang_display]
     st.info("Your feedback helps us improve!")
 
 # Map selected language to column names
@@ -91,38 +85,37 @@ for i, query in enumerate(example_queries):
 # -------------------------------
 # User Input & Speech Recognition
 # -------------------------------
-user_input_col, speech_col = st.columns([4, 1])
+user_input_col, mic_col = st.columns([4, 1])
 
 with user_input_col:
     user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
 
-with speech_col:
+with mic_col:
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🎙️ Speak"):
-        st.session_state['is_listening'] = True
+    audio_event = mic_recorder(start_prompt="🎙️ Speak", stop_prompt="Stop recording", just_once=True, use_container_width=True, format="webm")
 
-if st.session_state.get('is_listening'):
-    r = sr.Recognizer()
-    try:
-        with st.spinner("Listening... Please speak clearly."):
-            with sr.Microphone() as source:
-                r.adjust_for_ambient_noise(source)
-                audio = r.listen(source, timeout=5, phrase_time_limit=5)
+# Process the audio if an event occurs
+if audio_event and audio_event['bytes']:
+    with st.spinner("Transcribing..."):
+        try:
+            audio_data = audio_event['bytes']
+            r = sr.Recognizer()
+            audio = sr.AudioFile(BytesIO(audio_data))
             
-            user_question_speech = r.recognize_google(audio, language=selected_lang_code)
-            st.session_state['user_question'] = user_question_speech
-            st.session_state['is_listening'] = False
+            with audio as source:
+                audio = r.record(source)
+            
+            lang_code_map = {"English": "en-US", "Hindi": "hi-IN", "Bengali": "bn-IN", "Marathi": "mr-IN", "Tamil": "ta-IN", "Telugu": "te-IN"}
+            lang_code = lang_code_map.get(selected_lang_display, "en-US")
+            transcribed_text = r.recognize_google(audio, language=lang_code)
+
+            st.session_state['user_question'] = transcribed_text
             st.rerun()
-            
-    except sr.UnknownValueError:
-        st.warning("Sorry, I could not understand the audio. Please try again.")
-        st.session_state['is_listening'] = False
-    except sr.RequestError as e:
-        st.error(f"Could not request results from the speech recognition service; {e}")
-        st.session_state['is_listening'] = False
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {e}")
-        st.session_state['is_listening'] = False
+
+        except sr.UnknownValueError:
+            st.warning("Sorry, I could not understand the audio.")
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
 
 # -------------------------------
 # Fetch Answer
@@ -133,7 +126,6 @@ if submitted and st.session_state.get('user_question'):
     with st.spinner("Searching for your answer..."):
         queries = df[col_name].dropna().tolist()
         
-        # Use fuzzy matching with a threshold
         best_match, score, index = process.extractOne(
             st.session_state['user_question'], 
             queries, 
@@ -157,13 +149,16 @@ if submitted and st.session_state.get('user_question'):
         # Text-to-Speech for all languages
         # -------------------------------
         try:
-            tts = gTTS(text=short_answer, lang=selected_lang_code)
+            selected_lang_code = language_map.get(selected_lang_display)
             
-            # Save the audio to a BytesIO object instead of a temporary file
-            audio_bytes = BytesIO()
-            tts.write_to_fp(audio_bytes)
-            
-            st.audio(audio_bytes)
+            if selected_lang_code:
+                tts = gTTS(text=short_answer, lang=selected_lang_code)
+                audio_bytes = BytesIO()
+                tts.write_to_fp(audio_bytes)
+                audio_bytes.seek(0)
+                st.audio(audio_bytes, format='audio/mp3')
+            else:
+                st.warning(f"Audio playback is not supported for {selected_lang_display}.")
         except Exception as e:
             st.warning(f"Audio playback not available: {e}")
 
@@ -185,4 +180,3 @@ if submitted and st.session_state.get('user_question'):
 # -------------------------------
 st.markdown("---")
 st.info("Consult a lawyer nearby → Coming soon 🚀")
-
