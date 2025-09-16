@@ -18,7 +18,7 @@ st.markdown(
 
     /* Apply a background image and style */
     .stApp {
-        background-image: url("https://raw.githubusercontent.com/<your_username>/<your_repo>/<your_branch>/bg.png");
+        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/bg.png");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: fixed;
