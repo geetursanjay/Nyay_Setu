@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 from io import BytesIO
-import speech_recognition as sr
 from rapidfuzz import process, fuzz
-from mic_recorder_streamlit import mic_recorder
+from mic_recorder_streamlit import speech_to_text
 
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
@@ -35,7 +34,6 @@ language_map = {
     "Tamil": "ta",
     "Telugu": "te"
 }
-
 # Initialize session state for the user question
 if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
@@ -92,30 +90,11 @@ with user_input_col:
 
 with mic_col:
     st.markdown("<br>", unsafe_allow_html=True)
-    audio_event = mic_recorder(start_prompt="🎙️ Speak", stop_prompt="Stop recording", just_once=True, use_container_width=True, format="webm")
-
-# Process the audio if an event occurs
-if audio_event and audio_event['bytes']:
-    with st.spinner("Transcribing..."):
-        try:
-            audio_data = audio_event['bytes']
-            r = sr.Recognizer()
-            audio = sr.AudioFile(BytesIO(audio_data))
-            
-            with audio as source:
-                audio = r.record(source)
-            
-            lang_code_map = {"English": "en-US", "Hindi": "hi-IN", "Bengali": "bn-IN", "Marathi": "mr-IN", "Tamil": "ta-IN", "Telugu": "te-IN"}
-            lang_code = lang_code_map.get(selected_lang_display, "en-US")
-            transcribed_text = r.recognize_google(audio, language=lang_code)
-
-            st.session_state['user_question'] = transcribed_text
-            st.rerun()
-
-        except sr.UnknownValueError:
-            st.warning("Sorry, I could not understand the audio.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+    lang_code = language_map.get(selected_lang_display)
+    stt_text = speech_to_text(language=lang_code, start_prompt="🎙️ Speak", stop_prompt="Stop recording", just_once=True, use_container_width=True, key="stt_mic")
+    if stt_text:
+        st.session_state['user_question'] = stt_text
+        st.rerun()
 
 # -------------------------------
 # Fetch Answer
