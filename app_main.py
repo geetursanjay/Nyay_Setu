@@ -3,10 +3,53 @@ import pandas as pd
 from gtts import gTTS
 from io import BytesIO
 from rapidfuzz import process, fuzz
-from mic_recorder_streamlit import speech_to_text
 
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
+
+# -------------------------------
+# Custom CSS for front-end styling
+# -------------------------------
+st.markdown(
+    """
+    <style>
+    /* Import a calligraphy font from Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+
+    /* Apply a background image and style */
+    .stApp {
+        background-image: url("https://images.unsplash.com/photo-1542281216-9538a7413620?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+    }
+    .main-header {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 15px; /* Spacing between image and text */
+        font-family: 'Dancing Script', cursive;
+        color: darkblue;
+        text-align: center;
+    }
+    .main-header h1 {
+        font-size: 3.5rem; /* Larger font size for the title */
+        font-weight: 700;
+        text-shadow: 2px 2px 4px #000000;
+    }
+    .main-header img {
+        width: 100px; /* Adjust image size */
+        height: auto;
+    }
+    .st-emotion-cache-1cypd85 {
+        background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
+        border-radius: 10px;
+        padding: 20px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # -------------------------------
 # Load Dataset
@@ -39,10 +82,18 @@ if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
 
 # -------------------------------
-# App Title & Description
+# App Title with Image and Custom Font
 # -------------------------------
-st.markdown("<h1 style='text-align:center;color:darkblue;'>⚖️ Nyayasetu - AI Legal Consultant</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="main-header">
+        <img src="https://example.com/justice_image.png" alt="Justice">
+        <h1>Nyayasetu - AI Legal Consultant</h1>
+    </div>
+    <p style='text-align:center;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
+    """,
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
 # -------------------------------
@@ -81,20 +132,9 @@ for i, query in enumerate(example_queries):
             st.rerun()
 
 # -------------------------------
-# User Input & Speech Recognition
+# User Input
 # -------------------------------
-user_input_col, mic_col = st.columns([4, 1])
-
-with user_input_col:
-    user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
-
-with mic_col:
-    st.markdown("<br>", unsafe_allow_html=True)
-    lang_code = language_map.get(selected_lang_display)
-    stt_text = speech_to_text(language=lang_code, start_prompt="🎙️ Speak", stop_prompt="Stop recording", just_once=True, use_container_width=True, key="stt_mic")
-    if stt_text:
-        st.session_state['user_question'] = stt_text
-        st.rerun()
+user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
 
 # -------------------------------
 # Fetch Answer
