@@ -18,7 +18,7 @@ st.markdown(
 
     /* Apply a background image and style */
     .stApp {
-        background-image: url("https://images.unsplash.com/photo-1542281216-9538a7413620?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D");
+        background-image: url("https://raw.githubusercontent.com/<your_username>/<your_repo>/<your_branch>/bg.png");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: fixed;
@@ -37,9 +37,10 @@ st.markdown(
         font-weight: 700;
         text-shadow: 2px 2px 4px #000000;
     }
-    .main-header img {
-        width: 100px; /* Adjust image size */
-        height: auto;
+    .main-header .symbol {
+        font-size: 3rem; /* Size of the symbol */
+        color: #FFD700; /* Gold color for the symbol */
+        text-shadow: 2px 2px 4px #000000;
     }
     .st-emotion-cache-1cypd85 {
         background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
@@ -82,12 +83,12 @@ if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
 
 # -------------------------------
-# App Title with Image and Custom Font
+# App Title with Symbol and Custom Font
 # -------------------------------
 st.markdown(
     """
     <div class="main-header">
-        <img src="https://example.com/justice_image.png" alt="Justice">
+        <span class="symbol">⚖️</span>
         <h1>Nyayasetu - AI Legal Consultant</h1>
     </div>
     <p style='text-align:center;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
