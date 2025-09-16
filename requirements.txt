@@ -1,0 +1,8 @@
+streamlit
+pandas
+gTTS
+SpeechRecognition
+rapidfuzz
+openai
+openpyxl
+

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>NyaySetu - Legal Help</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background: #f4f7fb;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+      color: darkblue;
+    }
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0px 2px 8px rgba(0,0,0,0.2);
+    }
+    label {
+      font-weight: bold;
+    }
+    select, textarea, button {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      margin-bottom: 20px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    button {
+      background: darkblue;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: navy;
+    }
+    .response {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>⚖️ NyaySetu - Legal Help Portal</h1>
+  <div class="container">
+    <label for="lang">Select Language:</label>
+    <select id="lang">
+      <option>English</option>
+      <option>Hindi</option>
+      <option>Bengali</option>
+      <option>Marathi</option>
+      <option>Tamil</option>
+      <option>Telugu</option>
+    </select>
+
+    <label for="query">Enter your legal query:</label>
+    <textarea id="query" rows="3" placeholder="Type here..."></textarea>
+
+    <button onclick="sendQuery()">Get Answer</button>
+
+    <div id="output" class="response" style="display:none;">
+      <h3>Response:</h3>
+      <p><strong>Short Answer:</strong> <span id="short"></span></p>
+      <p><strong>Detailed Answer:</strong> <span id="detailed"></span></p>
+    </div>
+  </div>
+
+  <script>
+    async function sendQuery() {
+      const query = document.getElementById("query").value;
+      const lang = document.getElementById("lang").value;
+
+      if (!query) {
+        alert("Please enter a query.");
+        return;
+      }
+
+      const res = await fetch("http://127.0.0.1:5000/getlaws", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: query, lang: lang })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        document.getElementById("short").innerText = data.short_answer;
+        document.getElementById("detailed").innerText = data.detailed_answer;
+        document.getElementById("output").style.display = "block";
+      } else {
+        alert("Error fetching response from server.");
+      }
+    }
+  </script>
+</body>
+</html>
