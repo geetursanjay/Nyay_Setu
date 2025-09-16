@@ -1,3 +1,9 @@
+import streamlit as st
+import pandas as pd
+from gtts import gTTS
+from io import BytesIO
+from rapidfuzz import process, fuzz
+
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
 
@@ -21,7 +27,7 @@ st.markdown(
         display: flex;
         justify-content: center;
         align-items: center;
-        gap: 15px; /* Spacing between symbol and text */
+        gap: 15px; /* Spacing between image and text */
         font-family: 'Dancing Script', cursive;
         color: darkblue;
         text-align: center;
@@ -31,10 +37,9 @@ st.markdown(
         font-weight: 700;
         text-shadow: 2px 2px 4px #000000;
     }
-    .main-header .symbol {
-        font-size: 3rem; /* Size of the symbol */
-        color: #FFD700; /* Gold color for the symbol */
-        text-shadow: 2px 2px 4px #000000;
+    .main-header img {
+        width: 100px; /* Adjust image size */
+        height: auto;
     }
     .st-emotion-cache-1cypd85 {
         background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
@@ -77,12 +82,12 @@ if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
 
 # -------------------------------
-# App Title with Symbol and Custom Font
+# App Title with Image and Custom Font
 # -------------------------------
 st.markdown(
     """
     <div class="main-header">
-        <span class="symbol">⚖️</span>
+        <img src="https://example.com/justice_image.png" alt="Justice">
         <h1>Nyayasetu - AI Legal Consultant</h1>
     </div>
     <p style='text-align:center;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. Ask your question and get structured answers based on Indian laws.</p>
