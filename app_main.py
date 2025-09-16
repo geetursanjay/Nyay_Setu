@@ -1,9 +1,3 @@
-import streamlit as st
-import pandas as pd
-from gtts import gTTS
-from io import BytesIO
-from rapidfuzz import process, fuzz
-
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
 
@@ -200,6 +194,3 @@ if submitted and st.session_state.get('user_question'):
 # -------------------------------
 st.markdown("---")
 st.info("Consult a lawyer nearby → Coming soon 🚀")
-
-You can find a video about [creating a custom CSS style guide for your Streamlit app](https://www.youtube.com/watch?v=jbJpAdGlKVY).
-http://googleusercontent.com/youtube_content/10
