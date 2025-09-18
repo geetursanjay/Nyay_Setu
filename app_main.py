@@ -71,7 +71,7 @@ language_map = {
     "Marathi": "mr"
 }
 
-# Check which languages exist in dataset
+# Find which languages exist in dataset
 available_languages = []
 for lang in language_map.keys():
     if f"Query_{lang}" in df.columns:
@@ -113,13 +113,20 @@ col_detailed = f"Detailed_{selected_lang_display}"
 # -------------------------------
 st.markdown("### Get Legal Guidance Instantly")
 st.markdown("**Try one of these example questions:**")
-example_queries = df[col_query].dropna().tolist()[:3]
-cols = st.columns(len(example_queries))
-for i, query in enumerate(example_queries):
-    with cols[i]:
-        if st.button(query, key=f"example_{i}"):
-            st.session_state['user_question'] = query
-            st.rerun()
+
+example_queries = []
+if col_query in df.columns:
+    example_queries = df[col_query].dropna().tolist()[:3]
+
+if example_queries:
+    cols = st.columns(len(example_queries))
+    for i, query in enumerate(example_queries):
+        with cols[i]:
+            if st.button(query, key=f"example_{i}"):
+                st.session_state['user_question'] = query
+                st.rerun()
+else:
+    st.warning(f"No example queries found for {selected_lang_display}.")
 
 # -------------------------------
 # User Input
