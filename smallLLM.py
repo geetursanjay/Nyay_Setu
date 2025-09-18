@@ -1,99 +1,224 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
-import json
+import streamlit as st
 import pandas as pd
-from datasets import Dataset
-from transformers import AutoTokenizer, AutoModelForQuestionAnswering, TrainingArguments, Trainer, pipeline
+from gtts import gTTS
+from io import BytesIO
+from rapidfuzz import process, fuzz
 
-# --- 1. Load and Prepare the Dataset from the provided JSON file ---
-# The data is already in a perfect Q&A format. We'll load it and
-# convert it into a Hugging Face Dataset object.
-with open('constitution_qa.json', 'r') as f:
-    data = json.load(f)
+# Set up page configuration for a wider layout
+st.set_page_config(layout="wide")
 
-df = pd.DataFrame(data)
-dataset = Dataset.from_pandas(df)
+# -------------------------------
+# Custom CSS for front-end styling
+# -------------------------------
+st.markdown(
+    """
+    <style>
+    /* Import a calligraphy font from Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
 
-print("Dataset loaded and converted to Hugging Face format:")
-print(dataset)
-print("\nSample data point:")
-print(dataset[0])
-
-# --- 2. Load the Model and Tokenizer ---
-# We'll use a pre-trained model suitable for question-answering.
-# DistilBERT is a good, small option for a project like this.
-model_name = "distilbert-base-uncased"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForQuestionAnswering.from_pretrained(model_name)
-
-# --- 3. Preprocess the Data for the Model ---
-# This function tokenizes the questions and answers and prepares them
-# in a format the model expects.
-def tokenize_function(examples):
-    # This is a simplified example. For full fine-tuning on QA,
-    # you would need to handle tokenizing contexts and start/end positions.
-    # For a simple Q&A dataset like this, we can tokenize the Q and A.
-    return tokenizer(
-        examples['question'],
-        examples['answer'],
-        truncation=True,
-        padding="max_length"
-    )
-
-# Apply the tokenization function to the entire dataset
-tokenized_dataset = dataset.map(tokenize_function, batched=True)
-
-# You may also want to split your dataset into training and evaluation sets
-# train_test_split = tokenized_dataset.train_test_split(test_size=0.1)
-# train_dataset = train_test_split['train']
-# eval_dataset = train_test_split['test']
-
-# --- 4. Define Training Arguments and Fine-tune the Model ---
-# This sets up the training process. You can adjust these parameters.
-training_args = TrainingArguments(
-    output_dir="./results",
-    learning_rate=2e-5,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
-    num_train_epochs=3,
-    weight_decay=0.01,
-    report_to="none" # Disable logging to external services
+    /* Apply a background image and style */
+    .stApp {
+        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center center;
+    }
+    
+    /* Add a semi-transparent overlay to the entire app */
+    .stApp::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent black overlay */
+        z-index: -1;
+    }
+    .main-header {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 15px; /* Spacing between image and text */
+        font-family: 'Dancing Script', cursive;
+        color: darkblue;
+        text-align: center;
+    }
+    .main-header h1 {
+        font-size: 3.5rem; /* Larger font size for the title */
+        font-weight: 700;
+        text-shadow: 2px 2px 4px #FFFFFF; /* Changed text shadow to white for better contrast */
+    }
+    .main-header .symbol {
+        font-size: 3.5rem; /* Increased size of the symbol to match the title */
+        color: #FFD700; /* Gold color for the symbol */
+        text-shadow: 2px 2px 4px #000000;
+    }
+    .st-emotion-cache-1cypd85 {
+        background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
+        border-radius: 10px;
+        padding: 20px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=tokenized_dataset, # Use the full dataset for this example
-    # eval_dataset=eval_dataset
+# -------------------------------
+# Load Dataset from GitHub
+# -------------------------------
+@st.cache_data
+def load_data():
+    """Loads the dataset from GitHub raw link and caches it."""
+    url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/SIH_Dataset_Final.xlsx"
+    try:
+        df = pd.read_excel(url)
+        return df
+    except Exception as e:
+        st.error(f"Error loading dataset: {e}")
+        st.stop()
+
+df = load_data()
+
+# -------------------------------
+# Language mapping
+# -------------------------------
+language_map = {
+    "English": "en",
+    "Hindi": "hi",
+    "Bengali": "bn",
+    "Marathi": "mr",
+    "Tamil": "ta",
+    "Telugu": "te"
+}
+
+# Initialize session state for the user question
+if 'user_question' not in st.session_state:
+    st.session_state['user_question'] = ""
+
+# -------------------------------
+# App Title with Symbol and Custom Font
+# -------------------------------
+st.markdown(
+    """
+    <div class="main-header">
+        <span class="symbol">⚖️</span>
+        <h1>Nyayasetu - AI Legal Consultant</h1>
+    </div>
+    <p style='text-align:center; color: #000000; text-shadow: 1px 1px 2px #FFFFFF; font-weight: italic;;'>
+    Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. 
+    Ask your question and get structured answers based on Indian laws.</p>
+    """,
+    unsafe_allow_html=True
 )
+st.markdown("---")
 
-# Uncommented: This line starts the training process.
-print("\nStarting model training...")
-trainer.train()
+# -------------------------------
+# Sidebar for Language Selection
+# -------------------------------
+with st.sidebar:
+    st.header("Settings")
+    selected_lang_display = st.selectbox("Select language:", list(language_map.keys()))
+    st.info("Your feedback helps us improve!")
 
-# --- 5. Example of Using the Fine-tuned Model for a New Query ---
-# After training, you can save the model and load it for inference.
-# For demonstration purposes, we will use the pre-trained model here.
-# In a real project, you would save the fine-tuned model and then load that.
-# Uncommented: These lines save the fine-tuned model and tokenizer.
-model.save_pretrained("./my_fine_tuned_model")
-tokenizer.save_pretrained("./my_fine_tuned_model")
+# Map selected language to column names
+col_name = f"Query_{selected_lang_display}"
+short_col = f"Short_{selected_lang_display}"
+detailed_col = f"Detailed_{selected_lang_display}"
 
-# Use a Hugging Face pipeline for easy inference
-loaded_model_path = "./my_fine_tuned_model"
-qa_pipeline = pipeline("question-answering", model=loaded_model_path, tokenizer=loaded_model_path)
+if col_name not in df.columns or short_col not in df.columns or detailed_col not in df.columns:
+    st.error(f"Error: Required columns for '{selected_lang_display}' language are not present in the dataset.")
+    st.stop()
+    
+# -------------------------------
+# Main Content Area
+# -------------------------------
+st.markdown("### Get Legal Guidance Instantly")
+st.markdown("---")
 
-new_query = "What is the purpose of the industries declared by Parliament by law to be necessary?"
-context = "Industries necessary for the purpose of defence or for the prosecution of war. What is the purpose of the industries declared by Parliament by law to be necessary?"
+# -------------------------------
+# Example Queries
+# -------------------------------
+st.markdown("**Try one of these example questions:**")
+example_queries = df[col_name].dropna().tolist()[:3]
+cols = st.columns(len(example_queries))
+for i, query in enumerate(example_queries):
+    with cols[i]:
+        if st.button(query, key=f"example_{i}"):
+            st.session_state['user_question'] = query
+            st.rerun()
 
-result = qa_pipeline(question=new_query, context=context)
+# -------------------------------
+# User Input
+# -------------------------------
+input_col, button_col = st.columns([4, 1])
 
-print("\nExample Inference:")
-print(f"Question: {new_query}")
-print(f"Answer: {result['answer']}")
-print(f"Confidence Score: {result['score']:.4f}")
+with input_col:
+    user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
 
+with button_col:
+    st.markdown("<br>", unsafe_allow_html=True) # Add some spacing to align the button
+    submitted = st.button("Get Answer")
+
+# -------------------------------
+# Fetch Answer
+# -------------------------------
+if submitted and st.session_state.get('user_question'):
+    with st.spinner("Searching for your answer..."):
+        queries = df[col_name].dropna().tolist()
+        
+        best_match, score, index = process.extractOne(
+            st.session_state['user_question'], 
+            queries, 
+            scorer=fuzz.WRatio
+        )
+
+        if score > 80:
+            matched_row = df[df[col_name] == best_match]
+            short_answer = matched_row.iloc[0][short_col]
+            detailed_answer = matched_row.iloc[0][detailed_col]
+            st.success(f"Found a match with a similarity score of {score:.2f}%.")
+        else:
+            short_answer = "❌ Sorry, we couldn't find a close answer. Try rephrasing or select another language."
+            detailed_answer = short_answer
+            st.warning("No close match found. The AI could not find a similar query in the dataset.")
+            
+        st.markdown(f"**Short Answer:**\n{short_answer}")
+        st.markdown(f"**Detailed Answer:**\n{detailed_answer}")
+
+        # -------------------------------
+        # Text-to-Speech for all languages
+        # -------------------------------
+        try:
+            selected_lang_code = language_map.get(selected_lang_display)
+            
+            if selected_lang_code:
+                tts = gTTS(text=short_answer, lang=selected_lang_code)
+                audio_bytes = BytesIO()
+                tts.write_to_fp(audio_bytes)
+                audio_bytes.seek(0)
+                st.audio(audio_bytes, format='audio/mp3')
+            else:
+                st.warning(f"Audio playback is not supported for {selected_lang_display}.")
+        except Exception as e:
+            st.warning(f"Audio playback not available: {e}")
+
+    # -------------------------------
+    # Feedback
+    # -------------------------------
+    st.markdown("---")
+    st.markdown("### Was this helpful?")
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("👍 Yes", key="upvote"):
+            st.success("Thanks for your feedback! We'll use this to improve.")
+    with col2:
+        if st.button("👎 No", key="downvote"):
+            st.warning("We'll try to improve the accuracy of our answers.")
+
+# -------------------------------
+# Consult a Lawyer message
+# -------------------------------
+st.markdown("---")
+st.info("Consult a lawyer nearby → Coming soon 🚀")
