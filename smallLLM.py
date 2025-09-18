@@ -66,9 +66,9 @@ st.markdown(
 # -------------------------------
 @st.cache_data
 def load_data():
-    url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/constitution_qa.json"
+    url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/SIH_Dataset_Final.xlsx"
     try:
-        df = pd.read_json(url)
+        df = pd.read_excel(url)
         return df
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
