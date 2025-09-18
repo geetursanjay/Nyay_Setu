@@ -9,5 +9,6 @@ datasets
 torch
 sentencepiece
 accelerate
+deep-translator
 
 
