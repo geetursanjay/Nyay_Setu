@@ -1,21 +1,53 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import tempfile
-import os
-import speech_recognition as sr
-from rapidfuzz import process
-import csv
 from io import BytesIO
+from rapidfuzz import process, fuzz
 
-# Optional: AI Enhancement
-try:
-    from openai import OpenAI
-    import os
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Set in environment before running
-    client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-except:
-    client = None
+# -------------------------------
+# Page Config
+# -------------------------------
+st.set_page_config(layout="wide")
+
+# -------------------------------
+# Custom CSS
+# -------------------------------
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+    .stApp {
+        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center center;
+    }
+    .stApp::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: -1;
+    }
+    .main-header {
+        display: flex; justify-content: center; align-items: center; gap: 15px;
+        font-family: 'Dancing Script', cursive; color: darkblue; text-align: center;
+    }
+    .main-header h1 {
+        font-size: 3.5rem; font-weight: 700; text-shadow: 2px 2px 4px #FFFFFF;
+    }
+    .main-header .symbol {
+        font-size: 3.5rem; color: #FFD700; text-shadow: 2px 2px 4px #000000;
+    }
+    .st-emotion-cache-1cypd85 {
+        background-color: rgba(255, 255, 255, 0.7);
+        border-radius: 10px; padding: 20px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # -------------------------------
 # Load Dataset
@@ -28,180 +60,138 @@ def load_data():
 df = load_data()
 
 # -------------------------------
-# Language mapping
+# Detect available languages dynamically
 # -------------------------------
 language_map = {
-    "English": "English",
-    "Hindi": "Hindi",
-    "Bengali": "Bengali",
-    "Marathi": "Marathi",
-    "Tamil": "Tamil",
-    "Telugu": "Telugu"
-}
-
-# gTTS language codes
-tts_lang_map = {
     "English": "en",
     "Hindi": "hi",
     "Bengali": "bn",
-    "Marathi": "mr",
     "Tamil": "ta",
-    "Telugu": "te"
+    "Telugu": "te",
+    "Marathi": "mr"
 }
 
+# Find which languages exist in dataset
+available_languages = []
+for lang in language_map.keys():
+    if f"Query_{lang}" in df.columns:
+        available_languages.append(lang)
+
+if not available_languages:
+    st.error("❌ No valid language columns found in dataset. Please check your Excel file.")
+    st.stop()
+
 # -------------------------------
-# App Title & Description
+# App Header
 # -------------------------------
-st.markdown("<h1 style='text-align:center;color:darkblue;'>⚖️ Nyayasetu - AI Legal Consultant</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;'>Ask your legal question in your preferred language. Get quick, structured guidance powered by laws and AI.</p>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="main-header">
+        <span class="symbol">⚖️</span>
+        <h1>Nyayasetu - AI Legal Consultant</h1>
+    </div>
+    <p style='text-align:center; color: #000000; text-shadow: 1px 1px 2px #FFFFFF; font-weight: italic;'>Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps.</p>
+    """,
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
 # -------------------------------
-# Language Selection
+# Sidebar
 # -------------------------------
-selected_lang = st.selectbox("🌐 Select language:", list(language_map.keys()))
+with st.sidebar:
+    st.header("Settings")
+    selected_lang_display = st.selectbox("Select language:", available_languages)
 
-col_name = f"Query_{language_map[selected_lang]}"
-short_col = f"Short_{language_map[selected_lang]}"
-detailed_col = f"Detailed_{language_map[selected_lang]}"
+# Map selected columns
+col_query = f"Query_{selected_lang_display}"
+col_short = f"Short_{selected_lang_display}"
+col_detailed = f"Detailed_{selected_lang_display}"
 
 # -------------------------------
 # Example Queries
 # -------------------------------
-if col_name in df.columns:
-    example_queries = df[col_name].dropna().tolist()[:3]
-    st.markdown("💡 **Try one of these example questions:**")
+st.markdown("### Get Legal Guidance Instantly")
+st.markdown("**Try one of these example questions:**")
+
+example_queries = []
+if col_query in df.columns:
+    example_queries = df[col_query].dropna().tolist()[:3]
+
+if example_queries:
     cols = st.columns(len(example_queries))
     for i, query in enumerate(example_queries):
-        if cols[i].button(query):
-            st.session_state['user_question'] = query
+        with cols[i]:
+            if st.button(query, key=f"example_{i}"):
+                st.session_state['user_question'] = query
+                st.rerun()
 else:
-    example_queries = []
-
-# -------------------------------
-# Mic Input (Speech-to-Text)
-# -------------------------------
-def recognize_speech():
-    recognizer = sr.Recognizer()
-    mic = sr.Microphone()
-    with mic as source:
-        st.info("🎤 Listening... Speak now!")
-        recognizer.adjust_for_ambient_noise(source)
-        audio = recognizer.listen(source, phrase_time_limit=5)
-    try:
-        text = recognizer.recognize_google(audio, language="hi-IN" if selected_lang=="Hindi" else "en-IN")
-        st.success(f"✅ You said: {text}")
-        return text
-    except Exception as e:
-        st.error("❌ Could not recognize speech. Try again.")
-        return ""
-
-if st.button("🎤 Ask by Voice"):
-    spoken_text = recognize_speech()
-    if spoken_text:
-        st.session_state['user_question'] = spoken_text
+    st.warning(f"No example queries found for {selected_lang_display}.")
 
 # -------------------------------
 # User Input
 # -------------------------------
-user_question = st.text_input("✍️ Enter your question:", key='user_question')
+user_question = st.text_input(
+    "Enter your question:",
+    value=st.session_state.get('user_question', ''),
+    key='user_question_input'
+)
 
-# Allow Enter key to submit
-submitted = st.button("🔍 Get Answer") or (user_question and user_question.endswith("\n"))
+submitted = st.button("Get Answer")
 
 # -------------------------------
-# Fetch Answer with Semantic/Fuzzy Match
+# Fetch Answer
 # -------------------------------
 if submitted and user_question:
-    short_answer, detailed_answer = "", ""
+    with st.spinner("Searching for your answer..."):
+        queries = df[col_query].dropna().tolist()
 
-    if col_name in df.columns:
-        question_list = df[col_name].dropna().str.lower().tolist()
-        best_match, score, idx = process.extractOne(user_question.lower(), question_list) if question_list else (None, 0, None)
+        best_match, score, index = process.extractOne(
+            user_question, queries, scorer=fuzz.WRatio
+        )
 
-        if score > 50 and idx is not None:  # threshold for fuzzy match
-            matched_row = df.iloc[idx]
-            short_answer = str(matched_row[short_col])
-            detailed_answer = str(matched_row[detailed_col])
+        if score > 80:
+            matched_row = df[df[col_query] == best_match].iloc[0]
+            short_answer = matched_row[col_short]
+            detailed_answer = matched_row[col_detailed]
+            st.success(f"✅ Found a match (Similarity: {score:.2f}%).")
         else:
-            short_answer = "❌ Sorry, we couldn't find a close answer in our database."
+            short_answer = "❌ Sorry, no close match found. Try rephrasing."
             detailed_answer = short_answer
-    else:
-        short_answer = "⚠️ Dataset for this language not available."
-        detailed_answer = short_answer
+            st.warning("No close match found.")
 
-    # -------------------------------
-    # AI Enhancement (if available)
-    # -------------------------------
-    if client and detailed_answer not in ["", short_answer]:
+        # Display answers
+        st.markdown(f"**Short Answer:**\n{short_answer}")
+        st.markdown(f"**Detailed Answer:**\n{detailed_answer}")
+
+        # -------------------------------
+        # Text-to-Speech
+        # -------------------------------
         try:
-            prompt = f"""You are a legal assistant. Reframe and expand the following legal answer into a clear, helpful explanation for a citizen.
-            Question: {user_question}
-            Existing Answer: {detailed_answer}
-            """
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-                temperature=0.5
-            )
-            ai_answer = response.choices[0].message.content.strip()
-            detailed_answer = ai_answer
+            lang_code = language_map.get(selected_lang_display, "en")
+            tts = gTTS(text=short_answer, lang=lang_code)
+            audio_bytes = BytesIO()
+            tts.write_to_fp(audio_bytes)
+            audio_bytes.seek(0)
+            st.audio(audio_bytes, format="audio/mp3")
         except Exception as e:
-            st.warning("⚠️ AI enhancement failed, showing dataset answer only.")
+            st.warning(f"Audio not available: {e}")
 
     # -------------------------------
-    # Show Answers
+    # Feedback
     # -------------------------------
-    st.markdown("### 📖 Answers")
-    st.success(f"**Short Answer:**\n{short_answer}")
-    st.info(f"**Detailed Answer:**\n{detailed_answer}")
-
-    # -------------------------------
-    # Text-to-Speech for All Languages
-    # -------------------------------
-    tts_lang = tts_lang_map.get(selected_lang, "en")
-
-    col1, col2 = st.columns(2)
+    st.markdown("---")
+    st.markdown("### Was this helpful?")
+    col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("🔈 Play Short Answer"):
-            try:
-                tts = gTTS(text=short_answer, lang=tts_lang)
-                audio_fp = BytesIO()
-                tts.write_to_fp(audio_fp)
-                st.audio(audio_fp.getvalue(), format="audio/mp3")
-            except:
-                st.warning("Audio playback failed.")
+        if st.button("👍 Yes"):
+            st.success("Thanks for your feedback!")
     with col2:
-        if st.button("🔉 Play Detailed Answer"):
-            try:
-                tts = gTTS(text=detailed_answer, lang=tts_lang)
-                audio_fp = BytesIO()
-                tts.write_to_fp(audio_fp)
-                st.audio(audio_fp.getvalue(), format="audio/mp3")
-            except:
-                st.warning("Audio playback failed.")
-
-    # -------------------------------
-    # Feedback Section
-    # -------------------------------
-    st.markdown("### 📝 Feedback")
-    feedback_type = st.radio("Was this answer helpful?", ["👍 Yes", "👎 No"])
-    feedback_comment = ""
-    if feedback_type == "👎 No":
-        feedback_comment = st.text_input("Tell us what went wrong (optional):")
-
-    if st.button("Submit Feedback"):
-        file_exists = os.path.isfile("feedback.csv")
-        with open("feedback.csv", mode="a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            if not file_exists:
-                writer.writerow(["Question", "ShortAnswer", "DetailedAnswer", "FeedbackType", "Comment"])
-            writer.writerow([user_question, short_answer, detailed_answer, feedback_type, feedback_comment])
-        st.success("✅ Thanks for your response! We appreciate your feedback.")
+        if st.button("👎 No"):
+            st.warning("We’ll improve further.")
 
 # -------------------------------
-# Footer
+# Coming Soon
 # -------------------------------
 st.markdown("---")
-st.info("👨‍⚖️ Consult a lawyer nearby → Coming soon 🚀")
+st.info("Consult a lawyer nearby → Coming soon 🚀")
