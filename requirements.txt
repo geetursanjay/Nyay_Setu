@@ -4,4 +4,10 @@ gTTS
 rapidfuzz
 openai
 openpyxl
+transformers
+datasets
+torch
+sentencepiece
+accelerate
+
 
