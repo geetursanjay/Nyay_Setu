@@ -3,6 +3,7 @@ import pandas as pd
 from gtts import gTTS
 from io import BytesIO
 from rapidfuzz import process, fuzz
+from deep_translator import GoogleTranslator
 
 # Set up page configuration for a wider layout
 st.set_page_config(layout="wide")
@@ -13,10 +14,7 @@ st.set_page_config(layout="wide")
 st.markdown(
     """
     <style>
-    /* Import a calligraphy font from Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
-
-    /* Apply a background image and style */
     .stApp {
         background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
         background-size: cover;
@@ -24,8 +22,6 @@ st.markdown(
         background-attachment: fixed;
         background-position: center center;
     }
-    
-    /* Add a semi-transparent overlay to the entire app */
     .stApp::before {
         content: "";
         position: absolute;
@@ -33,30 +29,30 @@ st.markdown(
         left: 0;
         width: 100%;
         height: 100%;
-        background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent black overlay */
+        background-color: rgba(0, 0, 0, 0.5);
         z-index: -1;
     }
     .main-header {
         display: flex;
         justify-content: center;
         align-items: center;
-        gap: 15px; /* Spacing between image and text */
+        gap: 15px;
         font-family: 'Dancing Script', cursive;
         color: darkblue;
         text-align: center;
     }
     .main-header h1 {
-        font-size: 3.5rem; /* Larger font size for the title */
+        font-size: 3.5rem;
         font-weight: 700;
-        text-shadow: 2px 2px 4px #FFFFFF; /* Changed text shadow to white for better contrast */
+        text-shadow: 2px 2px 4px #FFFFFF;
     }
     .main-header .symbol {
-        font-size: 3.5rem; /* Increased size of the symbol to match the title */
-        color: #FFD700; /* Gold color for the symbol */
+        font-size: 3.5rem;
+        color: #FFD700;
         text-shadow: 2px 2px 4px #000000;
     }
     .st-emotion-cache-1cypd85 {
-        background-color: rgba(255, 255, 255, 0.7); /* Lighter, semi-transparent background for content */
+        background-color: rgba(255, 255, 255, 0.7);
         border-radius: 10px;
         padding: 20px;
     }
@@ -70,10 +66,9 @@ st.markdown(
 # -------------------------------
 @st.cache_data
 def load_data():
-    """Loads the dataset from GitHub raw link and caches it."""
     url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/constitution_qa.json"
     try:
-        df = pd.read_excel(url)
+        df = pd.read_json(url)
         return df
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
@@ -93,12 +88,12 @@ language_map = {
     "Telugu": "te"
 }
 
-# Initialize session state for the user question
+# Initialize session state
 if 'user_question' not in st.session_state:
     st.session_state['user_question'] = ""
 
 # -------------------------------
-# App Title with Symbol and Custom Font
+# App Title
 # -------------------------------
 st.markdown(
     """
@@ -122,15 +117,19 @@ with st.sidebar:
     selected_lang_display = st.selectbox("Select language:", list(language_map.keys()))
     st.info("Your feedback helps us improve!")
 
-# Map selected language to column names
-col_name = f"Query_{selected_lang_display}"
-short_col = f"Short_{selected_lang_display}"
-detailed_col = f"Detailed_{selected_lang_display}"
+selected_lang_code = language_map[selected_lang_display]
 
-if col_name not in df.columns or short_col not in df.columns or detailed_col not in df.columns:
-    st.error(f"Error: Required columns for '{selected_lang_display}' language are not present in the dataset.")
-    st.stop()
-    
+# -------------------------------
+# Helper: Translate text
+# -------------------------------
+def translate_text(text, lang_code):
+    if lang_code == "en" or not text:
+        return text
+    try:
+        return GoogleTranslator(source="en", target=lang_code).translate(text)
+    except:
+        return text  # fallback to English if translation fails
+
 # -------------------------------
 # Main Content Area
 # -------------------------------
@@ -141,9 +140,13 @@ st.markdown("---")
 # Example Queries
 # -------------------------------
 st.markdown("**Try one of these example questions:**")
-example_queries = df[col_name].dropna().tolist()[:3]
-cols = st.columns(len(example_queries))
-for i, query in enumerate(example_queries):
+example_queries = df["question"].dropna().tolist()[:3]  # always from English
+example_queries_display = [
+    translate_text(q, selected_lang_code) for q in example_queries
+]
+
+cols = st.columns(len(example_queries_display))
+for i, query in enumerate(example_queries_display):
     with cols[i]:
         if st.button(query, key=f"example_{i}"):
             st.session_state['user_question'] = query
@@ -155,10 +158,14 @@ for i, query in enumerate(example_queries):
 input_col, button_col = st.columns([4, 1])
 
 with input_col:
-    user_question = st.text_input("Enter your question:", value=st.session_state.get('user_question', ''), key='user_question_input')
+    user_question = st.text_input(
+        "Enter your question:",
+        value=st.session_state.get('user_question', ''),
+        key='user_question_input'
+    )
 
 with button_col:
-    st.markdown("<br>", unsafe_allow_html=True) # Add some spacing to align the button
+    st.markdown("<br>", unsafe_allow_html=True)
     submitted = st.button("Get Answer")
 
 # -------------------------------
@@ -166,43 +173,53 @@ with button_col:
 # -------------------------------
 if submitted and st.session_state.get('user_question'):
     with st.spinner("Searching for your answer..."):
-        queries = df[col_name].dropna().tolist()
-        
+        queries = df["question"].dropna().tolist()
+
+        # If user typed in regional lang, translate back to English for matching
+        if selected_lang_code != "en":
+            try:
+                user_q_for_match = GoogleTranslator(
+                    source=selected_lang_code, target="en"
+                ).translate(st.session_state['user_question'])
+            except:
+                user_q_for_match = st.session_state['user_question']
+        else:
+            user_q_for_match = st.session_state['user_question']
+
         best_match, score, index = process.extractOne(
-            st.session_state['user_question'], 
-            queries, 
-            scorer=fuzz.WRatio
+            user_q_for_match, queries, scorer=fuzz.WRatio
         )
 
         if score > 80:
-            matched_row = df[df[col_name] == best_match]
-            short_answer = matched_row.iloc[0][short_col]
-            detailed_answer = matched_row.iloc[0][detailed_col]
-            st.success(f"Found a match with a similarity score of {score:.2f}%.")
-        else:
-            short_answer = "❌ Sorry, we couldn't find a close answer. Try rephrasing or select another language."
-            detailed_answer = short_answer
-            st.warning("No close match found. The AI could not find a similar query in the dataset.")
-            
-        st.markdown(f"**Short Answer:**\n{short_answer}")
-        st.markdown(f"**Detailed Answer:**\n{detailed_answer}")
+            matched_row = df[df["question"] == best_match].iloc[0]
+            short_answer = matched_row["answer"]
+            detailed_answer = matched_row["answer"]  # if you have long form, replace here
 
-        # -------------------------------
-        # Text-to-Speech for all languages
-        # -------------------------------
-        try:
-            selected_lang_code = language_map.get(selected_lang_display)
-            
-            if selected_lang_code:
-                tts = gTTS(text=short_answer, lang=selected_lang_code)
-                audio_bytes = BytesIO()
-                tts.write_to_fp(audio_bytes)
-                audio_bytes.seek(0)
-                st.audio(audio_bytes, format='audio/mp3')
-            else:
-                st.warning(f"Audio playback is not supported for {selected_lang_display}.")
-        except Exception as e:
-            st.warning(f"Audio playback not available: {e}")
+            # Translate outputs for display
+            q_display = translate_text(best_match, selected_lang_code)
+            short_display = translate_text(short_answer, selected_lang_code)
+            detailed_display = translate_text(detailed_answer, selected_lang_code)
+
+            st.success(f"Found a match with a similarity score of {score:.2f}%.")
+
+            st.markdown(f"**Q:** {q_display}")
+            st.markdown(f"**Short Answer:** {short_display}")
+            st.markdown(f"**Detailed Answer:** {detailed_display}")
+
+            # -------------------------------
+            # Text-to-Speech
+            # -------------------------------
+            try:
+                if selected_lang_code:
+                    tts = gTTS(text=short_display, lang=selected_lang_code)
+                    audio_bytes = BytesIO()
+                    tts.write_to_fp(audio_bytes)
+                    audio_bytes.seek(0)
+                    st.audio(audio_bytes, format='audio/mp3')
+            except Exception as e:
+                st.warning(f"Audio playback not available: {e}")
+        else:
+            st.warning("❌ No close match found. Try rephrasing your query.")
 
     # -------------------------------
     # Feedback
