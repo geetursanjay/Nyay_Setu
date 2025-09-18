@@ -71,7 +71,7 @@ st.markdown(
 @st.cache_data
 def load_data():
     """Loads the dataset from GitHub raw link and caches it."""
-    url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/SIH_Dataset_Final.xlsx"
+    url = "https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/constitution_qa.json"
     try:
         df = pd.read_excel(url)
         return df
