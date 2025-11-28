@@ -60,6 +60,20 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+# -------------------------------
+# App Header (Nyayasetu Logo + Title)
+# -------------------------------
+st.markdown("""
+<div class='main-header' style="align-items:center; gap:12px; display:flex; justify-content:center;">
+  <span style="font-size:48px; line-height:1;">⚖️</span>
+  <div style="text-align:left;">
+    <h1 style="margin:0; font-size:40px; color:#0b3d91;">Nyayasetu — Legal Assistant</h1>
+    <p style="margin:0; color:rgba(0,0,0,0.6);">AI-powered multilingual legal guidance (Title→Summary→Case mapping)</p>
+  </div>
+</div>
+<hr style="margin-top:18px; margin-bottom:18px; opacity:0.2;">
+""", unsafe_allow_html=True)
+
 
 # -------------------------------
 # Helper: load CSV / CSV.GZ (cache-safe)
