@@ -1,11 +1,3 @@
-pip install googletrans==4.0.0-rc1
-# or
-pip install deep-translator
-
-# optional (for RAG):
-pip install sentence-transformers
-# optional fuzzy:
-pip install rapidfuzz
 
 # nyayasetu_translated.py
 import streamlit as st
