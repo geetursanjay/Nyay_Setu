@@ -1,11 +1,13 @@
-# nyayasetu_final.py
-# Single-page Streamlit app (SLM) using your dataset's Title/Summary/Case columns.
-# - Loads train.csv.gz / test.csv.gz (or plain .csv)
-# - Treats Title as the query/corpus, Summary as short answer, Case as detailed answer
-# - Uses RAG (sentence-transformers) if available, otherwise falls back to rapidfuzz fuzzy matching
-# - Plays short answers using gTTS
-# Paste into a file and run: streamlit run nyayasetu_final.py
+pip install googletrans==4.0.0-rc1
+# or
+pip install deep-translator
 
+# optional (for RAG):
+pip install sentence-transformers
+# optional fuzzy:
+pip install rapidfuzz
+
+# nyayasetu_translated.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,7 +17,7 @@ from datetime import datetime
 import os
 import re
 
-# Optional dependencies
+# Optional dependencies (RAG & fuzzy)
 try:
     from sentence_transformers import SentenceTransformer
     EMBEDDINGS_AVAILABLE = True
@@ -28,10 +30,32 @@ try:
 except Exception:
     FUZZY_AVAILABLE = False
 
+# Translation libs (try googletrans first, then deep_translator)
+TRANSLATION_AVAILABLE = False
+TRANSLATOR_TYPE = None
+translator_google = None
+GoogleTranslator = None
+
+try:
+    from googletrans import Translator as GoogleTransTranslator
+    translator_google = GoogleTransTranslator()
+    TRANSLATION_AVAILABLE = True
+    TRANSLATOR_TYPE = "googletrans"
+except Exception:
+    # fallback to deep_translator
+    try:
+        from deep_translator import GoogleTranslator as DeepGoogleTranslator
+        GoogleTranslator = DeepGoogleTranslator
+        TRANSLATION_AVAILABLE = True
+        TRANSLATOR_TYPE = "deep"
+    except Exception:
+        TRANSLATION_AVAILABLE = False
+        TRANSLATOR_TYPE = None
+
 # -------------------------------
 # Page config & CSS
 # -------------------------------
-st.set_page_config(layout="wide", page_title="Nyayasetu — Legal Assistant (Title→Summary→Case)")
+st.set_page_config(layout="wide", page_title="Nyayasetu — Legal Assistant (Translated)")
 st.markdown(
     """
     <style>
@@ -46,16 +70,12 @@ st.markdown(
 )
 
 # -------------------------------
-# Cache-safe dataset loader
+# Helper: load CSV / CSV.GZ (cache-safe)
 # -------------------------------
 @st.cache_data
-def load_csvs():
-    """
-    Try to load train.csv.gz / test.csv.gz / train.csv / test.csv (in that order).
-    Returns: (df_combined, sources, errors)
-    """
+def load_csv_candidates():
     candidates = ["train.csv.gz", "test.csv.gz", "train.csv", "test.csv"]
-    parts = []
+    df_list = []
     sources = []
     errors = []
 
@@ -72,28 +92,28 @@ def load_csvs():
 
     for fname in candidates:
         if os.path.exists(fname):
-            df_load, err = try_read(fname)
-            if df_load is not None:
-                df_load.columns = [str(c) for c in df_load.columns]
-                df_load["_source"] = fname
-                parts.append(df_load)
+            df_loaded, err = try_read(fname)
+            if df_loaded is not None:
+                df_loaded.columns = [str(c) for c in df_loaded.columns]
+                df_loaded["_source"] = fname
+                df_list.append(df_loaded)
                 sources.append(fname)
             else:
                 errors.append(f"{fname}: {err}")
 
-    if not parts:
+    if not df_list:
         return pd.DataFrame(), [], errors
 
     try:
-        combined = pd.concat(parts, ignore_index=True, sort=False)
+        df_combined = pd.concat(df_list, ignore_index=True, sort=False)
     except Exception as e:
         return pd.DataFrame(), sources, [f"Concatenation failed: {e}"]
 
-    return combined.reset_index(drop=True), sources, errors
+    return df_combined.reset_index(drop=True), sources, errors
 
-df, detected_sources, load_errors = load_csvs()
+df, detected_sources, load_errors = load_csv_candidates()
 
-# Show loader errors (outside cached function)
+# UI notifications for load errors
 if load_errors:
     for e in load_errors:
         st.warning(f"⚠️ {e}")
@@ -103,78 +123,80 @@ if not detected_sources:
     st.stop()
 
 # -------------------------------
-# Map dataset columns (Title/ Summary / Case) to Query/Short/Detailed
+# Map dataset columns: Title -> Query, Summary -> Short, Case -> Detailed
 # -------------------------------
-# Prefer Title -> Query, Summary -> Short, Case -> Detailed.
-# If Title missing, try other likely columns; if Summary missing, fallback to Title as short.
+cols = df.columns.tolist()
 col_query = None
 col_short = None
 col_detailed = None
 
-cols = df.columns.tolist()
-
+# Prefer exact case names Title/Summary/Case, else case-insensitive
 if "Title" in cols:
     col_query = "Title"
-elif "title" in [c.lower() for c in cols]:
-    # find case-insensitive
-    col_query = next(c for c in cols if c.lower() == "title")
+else:
+    col_query = next((c for c in cols if c.lower() == "title"), None)
 
-# Short / summary
 if "Summary" in cols:
     col_short = "Summary"
-elif "summary" in [c.lower() for c in cols]:
-    col_short = next(c for c in cols if c.lower() == "summary")
+else:
+    col_short = next((c for c in cols if c.lower() == "summary"), None)
 
-# Detailed / Case
 if "Case" in cols:
     col_detailed = "Case"
-elif "case" in [c.lower() for c in cols]:
-    col_detailed = next(c for c in cols if c.lower() == "case")
+else:
+    col_detailed = next((c for c in cols if c.lower() == "case"), None)
 
-# Fallbacks
+# Fallback heuristics if any missing
 if col_query is None:
-    # try to auto-detect a question-like column (heuristic)
-    candidate = None
-    for pattern in ["question", "query", "prompt", "issue", "title", "subject", "text"]:
-        candidate = candidate or next((c for c in cols if pattern in c.lower()), None)
-    col_query = candidate
+    for patt in ["question", "query", "prompt", "issue", "title", "subject", "text"]:
+        col_query = col_query or next((c for c in cols if patt in c.lower()), None)
 
 if col_short is None:
-    # try to choose a concise text column
-    candidate = None
-    for pattern in ["summary", "short", "answer", "abstract"]:
-        candidate = candidate or next((c for c in cols if pattern in c.lower()), None)
-    col_short = candidate or col_query  # if nothing else, use query as short
+    for patt in ["summary", "short", "answer", "abstract"]:
+        col_short = col_short or next((c for c in cols if patt in c.lower()), None)
+    col_short = col_short or col_query
 
 if col_detailed is None:
-    candidate = None
-    for pattern in ["case", "details", "detailed", "full", "text", "body"]:
-        candidate = candidate or next((c for c in cols if pattern in c.lower()), None)
-    col_detailed = candidate or col_short
+    for patt in ["case", "details", "detailed", "full", "body", "text"]:
+        col_detailed = col_detailed or next((c for c in cols if patt in c.lower()), None)
+    col_detailed = col_detailed or col_short
 
-# Force single-language behavior
-available_language = "English"
-selected_language = available_language
+# Single-language mode for dataset (since your dataset is Title/Summary/Case)
+language_map = {
+    "English": "en",
+    "Hindi": "hi",
+    "Bengali": "bn",
+    "Tamil": "ta",
+    "Telugu": "te",
+    "Marathi": "mr"
+}
 
-# Display mapping summary
+# Sidebar: always show language selector (UI requirement)
+st.sidebar.header("Settings")
+sidebar_languages = list(language_map.keys())
+selected_language = st.sidebar.selectbox("Select language:", sidebar_languages, index=0)
+
+# Info about translation availability
+if TRANSLATION_AVAILABLE:
+    st.sidebar.success(f"Translation available ({TRANSLATOR_TYPE})")
+else:
+    st.sidebar.info("Translation not available. Install googletrans or deep-translator to enable.")
+
+# Show mapping summary
 st.markdown("<div class='main-header'><span>⚖️</span><h1>Nyayasetu — Legal Assistant</h1></div>", unsafe_allow_html=True)
-st.markdown("Quick mapping: `Title` → Query, `Summary` → Short answer, `Case` → Detailed answer. (Single-language mode)")
+st.markdown("Mapping: `Title` → Query, `Summary` → Short answer, `Case` → Detailed answer (single-language dataset).")
 st.markdown("---")
 st.info(f"Loaded sources: {', '.join(detected_sources)} — total rows: {len(df)}")
-st.write("**Column mapping detected:**")
-st.write({"query": col_query, "short": col_short, "detailed": col_detailed})
+st.write("**Detected column mapping:**")
+st.json({"query": col_query, "short": col_short, "detailed": col_detailed})
 
-# If no query column after heuristics, prompt user to pick one from actual columns
 if col_query is None:
-    st.warning("No query-like column auto-detected. Please select which column to use as the query/title.")
-    chosen = st.selectbox("Select Query column from dataset", options=["-- none --"] + cols)
-    if chosen != "-- none --":
-        col_query = chosen
-    else:
-        st.error("App needs a Query column to match user questions. Upload/rename dataset or pick a column.")
-        st.stop()
+    st.error("No query-like column detected. Please ensure your dataset has a Title/Question column.")
+    st.stop()
 
-# Build queries list and embeddings (RAG)
+# -------------------------------
+# RAG: load model & build corpus embeddings (optional)
+# -------------------------------
 @st.cache_resource
 def load_embedding_model():
     if EMBEDDINGS_AVAILABLE:
@@ -187,11 +209,11 @@ def load_embedding_model():
 embedding_model = load_embedding_model()
 
 @st.cache_data
-def build_corpus(query_col):
+def build_queries_and_embeddings(query_col):
     if query_col not in df.columns:
         return [], None
     queries = df[query_col].dropna().astype(str).tolist()
-    if not queries or embedding_model is None:
+    if embedding_model is None or not queries:
         return queries, None
     try:
         emb = embedding_model.encode(queries, show_progress_bar=False)
@@ -199,42 +221,69 @@ def build_corpus(query_col):
     except Exception:
         return queries, None
 
-queries_list, corpus_embeddings = build_corpus(col_query)
+queries_list, corpus_embeddings = build_queries_and_embeddings(col_query)
 
 # -------------------------------
-# Interface: input + search
+# Helper: translate text (uses googletrans or deep-translator)
 # -------------------------------
-st.markdown("### Ask a legal question (search over dataset Titles)")
-user_q = st.text_input("Enter your question or keywords:", value="", placeholder="e.g., eviction without notice")
+def translate_text(text: str, target_lang_code: str) -> str:
+    if not TRANSLATION_AVAILABLE or target_lang_code == "en":
+        return text
+    try:
+        if TRANSLATOR_TYPE == "googletrans" and translator_google is not None:
+            # googletrans may auto-detect source
+            res = translator_google.translate(text, dest=target_lang_code)
+            return getattr(res, "text", str(res))
+        elif TRANSLATOR_TYPE == "deep" and GoogleTranslator is not None:
+            trans = GoogleTranslator(source="auto", target=target_lang_code)
+            return trans.translate(text)
+    except Exception:
+        return text
+    return text
+
+# -------------------------------
+# UI: examples, input, search
+# -------------------------------
+st.markdown("### Get Legal Guidance Instantly")
+st.markdown("**Try one of these example questions:**")
+
+example_queries = df[col_query].dropna().astype(str).tolist()[:3] if col_query in df.columns else []
+if example_queries:
+    ex_cols = st.columns(len(example_queries))
+    for i, ex in enumerate(example_queries):
+        with ex_cols[i]:
+            if st.button(ex if len(ex) <= 60 else ex[:57] + "...", key=f"example_{i}"):
+                st.session_state['user_q'] = ex
+
+user_question = st.text_input("Enter your question or keywords:", value=st.session_state.get("user_q", ""), key="user_question_input")
 use_rag = st.checkbox("Use RAG semantic search (recommended)", value=(embedding_model is not None and corpus_embeddings is not None), disabled=(embedding_model is None or corpus_embeddings is None))
 
 if st.button("Get Answer"):
-    if not user_q or user_q.strip() == "":
-        st.warning("Please enter a question or some keywords.")
+    if not user_question or user_question.strip() == "":
+        st.warning("Please enter a question or keywords.")
     else:
-        with st.spinner("Searching the dataset..."):
+        with st.spinner("Searching..."):
             matched_row = None
             confidence = 0.0
 
             # RAG path
             if use_rag and corpus_embeddings is not None and embedding_model is not None:
                 try:
-                    q_emb = embedding_model.encode([user_q])
+                    q_emb = embedding_model.encode([user_question])
                     scores = np.dot(corpus_embeddings, q_emb.T).flatten()
                     top_idx = int(np.argmax(scores))
                     top_score = float(scores[top_idx])
-                    # threshold can be tuned; 0.25 is conservative
                     if top_score > 0.25:
                         matched_row = df.iloc[top_idx]
                         confidence = float(top_score) * 100.0
-                        st.success(f"RAG matched (score={top_score:.3f})")
+                        st.success(f"RAG matched (score {top_score:.3f})")
                 except Exception as e:
                     st.warning(f"RAG search failed: {e}")
 
             # Fuzzy fallback
             if matched_row is None and FUZZY_AVAILABLE and queries_list:
                 try:
-                    best = process.extractOne(user_q, queries_list, scorer=fuzz.WRatio)
+                    best = process.extractOne(user_question, queries_list, scorer=fuzz.WRatio)
                     if best:
                         match_text, score, pos = best
                         if score >= 50:
@@ -242,31 +291,35 @@ if st.button("Get Answer"):
                             if len(idxs) > 0:
                                 matched_row = df.loc[idxs[0]]
                                 confidence = float(score)
-                                st.success(f"Fuzzy matched (similarity={score:.1f}%)")
+                                st.success(f"Fuzzy matched (similarity {score:.1f}%)")
                 except Exception as e:
                     st.warning(f"Fuzzy search failed: {e}")
 
-            # Prepare answers
             if matched_row is not None:
-                short_ans = matched_row.get(col_short, "Short answer not available")
-                detailed_ans = matched_row.get(col_detailed, short_ans)
+                short_answer = str(matched_row.get(col_short, "Short answer not available")) if col_short else "Short answer not available"
+                detailed_answer = str(matched_row.get(col_detailed, short_answer)) if col_detailed else short_answer
             else:
-                short_ans = "❌ No relevant answer found. Try rephrasing or consult a legal expert."
-                detailed_ans = short_ans
+                short_answer = "❌ No relevant answer found. Try rephrasing or consult a legal expert."
+                detailed_answer = short_answer
                 st.warning("No sufficiently relevant match found.")
 
-        # Display results
-        st.markdown("---")
-        st.markdown("#### Short answer")
-        st.info(str(short_ans))
-        st.markdown("#### Detailed answer")
-        with st.expander("View full details", expanded=False):
-            st.write(str(detailed_ans))
+        # Translate short answer if needed
+        target_code = language_map.get(selected_language, "en")
+        translated_answer = translate_text(short_answer, target_code)
 
-        # Text-to-speech
+        # Display answers (show translated short answer)
+        st.markdown("---")
+        st.markdown("#### Short Answer")
+        st.info(str(translated_answer))
+        st.markdown("#### Detailed Answer")
+        with st.expander("View full details", expanded=False):
+            st.write(str(detailed_answer))
+
+        # Text-to-Speech for translated answer
         try:
-            lang_code = "en"  # dataset single-language English
-            tts = gTTS(text=str(short_ans), lang=lang_code, slow=False)
+            # if translation failed or not available, tts will still attempt with target_code (may error)
+            tts_lang = target_code
+            tts = gTTS(text=str(translated_answer), lang=tts_lang, slow=False)
             buf = BytesIO()
             tts.write_to_fp(buf)
             buf.seek(0)
@@ -274,17 +327,18 @@ if st.button("Get Answer"):
         except Exception as e:
             st.warning(f"Audio generation failed: {e}")
 
-        # Save chat history
+        # Save to chat history
         st.session_state.setdefault("chat_history", [])
         st.session_state["chat_history"].append({
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "question": user_q,
-            "answer": str(short_ans),
+            "question": user_question,
+            "answer": str(translated_answer),
+            "language": selected_language,
             "confidence": float(confidence)
         })
 
 # -------------------------------
-# Recent queries
+# Recent history
 # -------------------------------
 if st.session_state.get("chat_history"):
     st.markdown("---")
@@ -292,8 +346,9 @@ if st.session_state.get("chat_history"):
     for entry in reversed(st.session_state["chat_history"][-8:]):
         st.write(f"Q: {entry['question']}")
         st.write(f"A: {entry['answer']}")
-        st.caption(f"{entry['timestamp']} | conf: {entry.get('confidence',0):.1f}")
+        st.caption(f"{entry['timestamp']} | {entry['language']} | conf: {entry.get('confidence',0):.1f}")
         st.markdown("---")
 
 st.markdown("---")
 st.caption("⚠️ Disclaimer: This assistant provides general legal information only and is not a substitute for professional legal advice.")
+
