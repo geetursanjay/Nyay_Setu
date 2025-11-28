@@ -1,3 +1,4 @@
+# nyayasetu_rag_slm_simple.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -23,34 +24,26 @@ except Exception:
 # -------------------------------
 # Page config & CSS
 # -------------------------------
-st.set_page_config(layout="wide", page_title="Nyayasetu - AI Legal Assistant (RAG)")
+st.set_page_config(layout="wide", page_title="Nyayasetu - AI Legal Consultant (RAG)")
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
-    .stApp {
-        background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-attachment: fixed;
-        background-position: center center;
-    }
-    .stApp::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-                     background-color: rgba(0,0,0,0.45); z-index:-1; }
+    .stApp { background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png"); background-size: cover; }
+    .stApp::before { content: ""; position: absolute; top:0; left:0; width:100%; height:100%; background-color: rgba(0,0,0,0.45); z-index:-1; }
     .main-header { display:flex; align-items:center; justify-content:center; gap:12px; font-family:'Dancing Script', cursive; }
-    .main-header h1{ margin:0; color:#0b3d91; }
-    .panel { background: rgba(255,255,255,0.85); padding:16px; border-radius:10px; }
+    .main-header h1 { margin:0; color:#0b3d91; }
+    .panel { background: rgba(255,255,255,0.88); padding:16px; border-radius:10px; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
 # -------------------------------
-# Utility: load CSV or CSV.GZ (cache-safe)
+# Cache-safe loader for .gz or .csv
 # -------------------------------
 @st.cache_data
-def load_compressed_data():
-    """Load train/test CSV (accept .gz). Return (df_combined, sources, errors)."""
+def load_csv_candidates():
     candidates = ["train.csv.gz", "test.csv.gz", "train.csv", "test.csv"]
     df_list = []
     sources = []
@@ -61,7 +54,6 @@ def load_compressed_data():
         last_exc = None
         for enc in encs:
             try:
-                # compression='infer' lets pandas open gz automatically
                 df = pd.read_csv(path, encoding=enc, compression="infer")
                 return df, None
             except Exception as e:
@@ -72,7 +64,6 @@ def load_compressed_data():
         if os.path.exists(fname):
             df_load, err = try_read(fname)
             if df_load is not None:
-                # ensure string column names
                 df_load.columns = [str(c) for c in df_load.columns]
                 df_load["_source"] = fname
                 df_list.append(df_load)
@@ -90,93 +81,93 @@ def load_compressed_data():
 
     return df_combined.reset_index(drop=True), sources, errors
 
-# Load dataset and show errors/notes
-df, detected_sources, load_errors = load_compressed_data()
+df, detected_sources, load_errors = load_csv_candidates()
 if load_errors:
     for e in load_errors:
         st.warning(f"⚠️ {e}")
 
-if not detected_sources:
-    st.error("No dataset files found. Please place `train.csv.gz` and/or `test.csv.gz` in the app folder.")
-    st.stop()
+if detected_sources:
+    st.sidebar.info(f"Loaded: {', '.join(detected_sources)} — rows: {len(df)}")
+else:
+    st.sidebar.info("No dataset files found; place train.csv.gz/test.csv.gz in app folder.")
 
 # -------------------------------
-# Flexible column detection & mapping
+# Column detection (simple, no manual mapping UI)
 # -------------------------------
-def normalize_colname(c):
-    if c is None:
-        return ""
-    s = str(c).strip()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^\w]", "_", s)
-    s = re.sub(r"_+", "_", s)
-    return s.lower()
+def normalize(c): 
+    return re.sub(r"[^0-9a-zA-Z]+", "_", str(c).strip()).lower()
 
-# Build normalized map normalized -> original
-normalized_map = { normalize_colname(col): col for col in df.columns.tolist() }
+cols = df.columns.tolist() if not df.empty else []
+norm_map = { normalize(c): c for c in cols }
 
-# Languages we support UI-wise (display names)
-LANG_CANDIDATES = ["English", "Hindi", "Bengali", "Tamil", "Telugu", "Marathi"]
-detected_languages = {}  # e.g. {"English": {"query": "Query_English", ...}, ...}
+# 1) Try to detect language-specific Query_<Language> columns
+LANGS = ["English","Hindi","Bengali","Tamil","Telugu","Marathi"]
+available_languages = []
+lang_columns = {}  # e.g. "English": {"query": "Query_English", "short": ..., "detailed": ...}
 
-norm_cols = list(normalized_map.keys())
+for lang in LANGS:
+    key = lang.lower()
+    qname = next((norm_map[n] for n in norm_map if n == f"query_{key}" or n == f"query{key}"), None)
+    sname = next((norm_map[n] for n in norm_map if n == f"short_{key}" or n == f"short{key}"), None)
+    dname = next((norm_map[n] for n in norm_map if n.startswith(f"detailed") and key in n or n.startswith(f"detail") and key in n), None)
+    # fallback contains
+    if not qname:
+        qname = next((norm_map[n] for n in norm_map if n.startswith("query") and key in n), None)
+    if not sname:
+        sname = next((norm_map[n] for n in norm_map if n.startswith("short") and key in n), None)
+    if qname or sname or dname:
+        available_languages.append(lang)
+        lang_columns[lang] = {"query": qname, "short": sname, "detailed": dname}
 
-for lang in LANG_CANDIDATES:
-    lang_key = lang.lower()
-    # patterns to match normalized names
-    q_candidates = [f"query_{lang_key}", f"query{lang_key}", f"q_{lang_key}", f"question_{lang_key}", f"question{lang_key}"]
-    s_candidates = [f"short_{lang_key}", f"short{lang_key}", f"ans_{lang_key}", f"answer_{lang_key}"]
-    d_candidates = [f"detailed_{lang_key}", f"detailed{lang_key}", f"detail_{lang_key}", f"d_{lang_key}"]
+# 2) If no language-specific columns found, fallback to generic query/short/detailed detection
+generic_query_col = None
+generic_short_col = None
+generic_detailed_col = None
 
-    q = next((normalized_map[n] for n in norm_cols if n in q_candidates), None)
-    s = next((normalized_map[n] for n in norm_cols if n in s_candidates), None)
-    d = next((normalized_map[n] for n in norm_cols if n in d_candidates), None)
+if not available_languages:
+    # prefer columns named query, question, q_, prompt
+    for pattern in ["query", "question", "q_", "q"]:
+        generic_query_col = generic_query_col or next((norm_map[n] for n in norm_map if pattern in n), None)
+    for pattern in ["short", "summary", "ans", "answer"]:
+        generic_short_col = generic_short_col or next((norm_map[n] for n in norm_map if pattern in n), None)
+    for pattern in ["detailed", "detail", "explain"]:
+        generic_detailed_col = generic_detailed_col or next((norm_map[n] for n in norm_map if pattern in n), None)
 
-    # fallback: contains lang and startswith query/short/detailed
-    if q is None:
-        q = next((normalized_map[n] for n in norm_cols if n.startswith("query") and lang_key in n), None)
-    if s is None:
-        s = next((normalized_map[n] for n in norm_cols if n.startswith("short") and lang_key in n), None)
-    if d is None:
-        d = next((normalized_map[n] for n in norm_cols if (n.startswith("detailed") or n.startswith("detail") or n.startswith("d_")) and lang_key in n), None)
+# -------------------------------
+# Sidebar: minimal (only language selector)
+# -------------------------------
+st.sidebar.header("Settings")
+if available_languages:
+    selected_lang = st.sidebar.selectbox("Select language:", available_languages)
+    col_query = lang_columns[selected_lang].get("query") or lang_columns[selected_lang].get("query")  # explicit
+    col_short = lang_columns[selected_lang].get("short")
+    col_detailed = lang_columns[selected_lang].get("detailed")
+else:
+    st.sidebar.warning("No Query_<Language> columns found. Using generic detection (no language labels).")
+    selected_lang = "Default"
+    col_query = generic_query_col
+    col_short = generic_short_col
+    col_detailed = generic_detailed_col
 
-    if q or s or d:
-        detected_languages[lang] = {"query": q, "short": s, "detailed": d}
+# show detected columns (compact)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Detected columns**")
+st.sidebar.write({
+    "Query": col_query,
+    "Short": col_short,
+    "Detailed": col_detailed
+})
 
-# If nothing detected, show manual mapping UI
-if not detected_languages:
-    st.sidebar.markdown("### Column mapping required")
-    st.sidebar.info("Auto-detection did not find Query_<Language> columns. Please map columns manually.")
-    chosen = st.sidebar.selectbox("Map language label", LANG_CANDIDATES)
-    all_cols = df.columns.tolist()
-    mq = st.sidebar.selectbox(f"Select Query column for {chosen}", options=["-- none --"] + all_cols, index=0)
-    ms = st.sidebar.selectbox(f"Select Short column for {chosen}", options=["-- none --"] + all_cols, index=0)
-    md = st.sidebar.selectbox(f"Select Detailed column for {chosen}", options=["-- none --"] + all_cols, index=0)
-    if mq != "-- none --":
-        detected_languages[chosen] = {"query": mq, "short": (ms if ms != "-- none --" else None), "detailed": (md if md != "-- none --" else None)}
-    else:
-        st.error("Please map at least the Query column. App cannot continue without it.")
-        st.stop()
-
-# Build available language list and allow selection (sidebar)
-available_languages = list(detected_languages.keys())
-st.sidebar.markdown("### Language")
-selected_lang = st.sidebar.selectbox("Choose language", available_languages, index=0)
-
-# resolve column names
-col_query = detected_languages[selected_lang]["query"]
-col_short = detected_languages[selected_lang]["short"]
-col_detailed = detected_languages[selected_lang]["detailed"]
-
+# Continue even if some columns are missing — show a visible warning but do not block
 if col_query is None:
-    st.error(f"Selected language {selected_lang} has no Query column mapped. Please remap in sidebar.")
-    st.stop()
+    st.warning("No query/question column detected. Upload a dataset with Query_<Language> or a generic question column.")
+    # do not stop() — user can still enter question (it will yield no match)
 
 # -------------------------------
-# RAG: embedding model + corpus embeddings
+# RAG: model + embeddings (optional)
 # -------------------------------
 @st.cache_resource
-def load_embedding_model():
+def load_model():
     if EMBEDDINGS_AVAILABLE:
         try:
             return SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
@@ -184,12 +175,13 @@ def load_embedding_model():
             return None
     return None
 
-embedding_model = load_embedding_model()
+embedding_model = load_model()
 
 @st.cache_data
-def build_corpus_and_embeddings(query_series):
-    """Return (queries_list, embeddings_array_or_None). embeddings may be None if model missing."""
-    queries = query_series.dropna().astype(str).tolist()
+def build_corpus(query_col):
+    if query_col is None or query_col not in df.columns:
+        return [], None
+    queries = df[query_col].dropna().astype(str).tolist()
     if embedding_model is None or not queries:
         return queries, None
     try:
@@ -198,114 +190,71 @@ def build_corpus_and_embeddings(query_series):
     except Exception:
         return queries, None
 
-queries_list, corpus_embeddings = build_corpus_and_embeddings(df[col_query] if col_query in df.columns else pd.Series([], dtype=object))
+queries_list, corpus_embeddings = build_corpus(col_query)
 
 # -------------------------------
-# UI Header
+# UI Header and examples
 # -------------------------------
-st.markdown("<div class='main-header'><span>⚖️</span><h1>Nyayasetu — AI Legal Consultant (RAG)</h1></div>", unsafe_allow_html=True)
-st.markdown("#### Quick multi-language legal guidance (RAG-enabled).")
+st.markdown("<div class='main-header'><span>⚖️</span><h1>Nyayasetu - AI Legal Consultant</h1></div>", unsafe_allow_html=True)
+st.markdown("Nyayasetu provides quick multi-language legal guidance using RAG when available.")
 st.markdown("---")
 
-# show some dataset info
-st.info(f"Loaded sources: {', '.join(detected_sources)} — entries: {len(df)}")
-st.caption(f"Using language: **{selected_lang}** — Query column: `{col_query}`")
+# example queries (if available)
+if col_query and col_query in df.columns:
+    example_queries = df[col_query].dropna().astype(str).tolist()[:3]
+else:
+    example_queries = []
+
+st.markdown("### Get Legal Guidance Instantly")
+st.markdown("**Try one of these example questions:**")
+
+if example_queries:
+    cols = st.columns(len(example_queries))
+    for i, ex in enumerate(example_queries):
+        with cols[i]:
+            if st.button(ex if len(ex) < 60 else ex[:57] + "...", key=f"ex_{i}"):
+                st.session_state["user_q"] = ex
 
 # -------------------------------
-# Input area
+# Input & search
 # -------------------------------
-st.markdown("### Ask your legal question")
-user_q = st.text_input("Enter your question", value="", key="user_question_input", placeholder="e.g., Can my landlord evict me without notice?")
+user_q = st.text_input("Enter your legal question:", value=st.session_state.get("user_q",""), key="input_q")
 use_rag = st.checkbox("Use RAG semantic search (recommended)", value=(embedding_model is not None and corpus_embeddings is not None), disabled=(embedding_model is None or corpus_embeddings is None))
 
 if st.button("Get Answer"):
-    if not user_q or user_q.strip() == "":
+    if not user_q or user_q.strip()=="":
         st.warning("Please enter a question.")
     else:
         with st.spinner("Searching..."):
             matched_row = None
             confidence = 0.0
 
-            # RAG path
+            # RAG path (if available & enabled)
             if use_rag and corpus_embeddings is not None:
                 try:
                     q_emb = embedding_model.encode([user_q])
                     scores = np.dot(corpus_embeddings, q_emb.T).flatten()
                     top_idx = int(np.argmax(scores))
                     top_score = float(scores[top_idx])
-                    # use a conservative threshold for relevance in embedding-space (empirical)
-                    if top_score > 0.25:  # tuneable
+                    # threshold is empirical; tune if needed
+                    if top_score > 0.25:
                         matched_row = df.iloc[top_idx]
-                        confidence = float(top_score) * 100.0
-                        st.success(f"✅ RAG match found (score: {top_score:.3f})")
+                        confidence = float(top_score)*100.0
+                        st.success(f"RAG matched (score {top_score:.3f})")
                 except Exception:
                     matched_row = None
 
-            # Fallback fuzzy matching if RAG not used or failed
+            # Fuzzy fallback
             if matched_row is None and FUZZY_AVAILABLE and queries_list:
                 try:
-                    best_match = process.extractOne(user_q, queries_list, scorer=fuzz.WRatio)
-                    if best_match:
-                        match_text, score, pos = best_match
+                    best = process.extractOne(user_q, queries_list, scorer=fuzz.WRatio)
+                    if best:
+                        match_text, score, pos = best
                         if score >= 50:
-                            # find the row for this matched query text
-                            idx = df[df[col_query].astype(str) == match_text].index
-                            if not idx.empty:
-                                matched_row = df.loc[idx[0]]
+                            idxs = df[df[col_query].astype(str)==match_text].index
+                            if len(idxs)>0:
+                                matched_row = df.loc[idxs[0]]
                                 confidence = float(score)
-                                st.success(f"✅ Fuzzy match found (similarity: {score:.1f}%)")
+                                st.success(f"Fuzzy matched (sim {score:.1f}%)")
                 except Exception:
-                    matched_row = None
 
-            # Prepare answers
-            if matched_row is not None:
-                short_ans = matched_row.get(col_short, "Short answer not available")
-                detailed_ans = matched_row.get(col_detailed, short_ans if col_detailed is None else "Detailed answer not available")
-            else:
-                short_ans = "❌ No relevant answer found. Try rephrasing your question or consult a legal professional."
-                detailed_ans = short_ans
-                st.warning("No sufficiently relevant match found.")
-
-        # Display Answers
-        st.markdown("---")
-        st.markdown("#### Short Answer")
-        st.info(str(short_ans))
-        st.markdown("#### Detailed Answer")
-        with st.expander("View full details", expanded=False):
-            st.write(str(detailed_ans))
-
-        # TTS playback for short answer
-        try:
-            lang_code_map = { "English":"en", "Hindi":"hi", "Bengali":"bn", "Tamil":"ta", "Telugu":"te", "Marathi":"mr" }
-            lang_code = lang_code_map.get(selected_lang, "en")
-            tts = gTTS(text=str(short_ans), lang=lang_code, slow=False)
-            audio_buf = BytesIO()
-            tts.write_to_fp(audio_buf)
-            audio_buf.seek(0)
-            st.audio(audio_buf.read(), format="audio/mp3")
-        except Exception as e:
-            st.warning(f"Audio generation failed: {e}")
-
-        # Add to session chat history
-        st.session_state.chat_history.append({
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "question": user_q,
-            "answer": str(short_ans),
-            "language": selected_lang,
-            "confidence": float(confidence)
-        })
-
-# -------------------------------
-# Recent history & footer
-# -------------------------------
-if st.session_state.chat_history:
-    st.markdown("---")
-    st.markdown("### Recent queries")
-    for entry in reversed(st.session_state.chat_history[-8:]):
-        st.write(f"Q: {entry['question']}")
-        st.write(f"A: {entry['answer']}")
-        st.caption(f"{entry['timestamp']} | {entry['language']} | conf: {entry.get('confidence',0):.1f}")
-        st.markdown("---")
-
-st.markdown("---")
-st.caption("⚠️ Disclaimer: This assistant provides general informational guidance only and is not a substitute for professional legal advice.")
