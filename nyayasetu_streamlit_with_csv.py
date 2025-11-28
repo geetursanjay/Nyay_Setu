@@ -174,13 +174,13 @@ if TRANSLATION_AVAILABLE:
 else:
     st.sidebar.info("Translation not available. Install googletrans or deep-translator to enable.")
 
-# Show mapping summary
+''' Show mapping summary
 st.markdown("<div class='main-header'><span>⚖️</span><h1>Nyayasetu — Legal Assistant</h1></div>", unsafe_allow_html=True)
 st.markdown("Mapping: `Title` → Query, `Summary` → Short answer, `Case` → Detailed answer (single-language dataset).")
 st.markdown("---")
 st.info(f"Loaded sources: {', '.join(detected_sources)} — total rows: {len(df)}")
 st.write("**Detected column mapping:**")
-st.json({"query": col_query, "short": col_short, "detailed": col_detailed})
+st.json({"query": col_query, "short": col_short, "detailed": col_detailed})'''
 
 if col_query is None:
     st.error("No query-like column detected. Please ensure your dataset has a Title/Question column.")
