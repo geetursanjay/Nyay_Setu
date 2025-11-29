@@ -78,17 +78,17 @@ st.markdown(
 )
 
 # ---------------------------------------
-# HEADER
+# HEADER (logo + visible subtitle)
 # ---------------------------------------
 st.markdown("""
-<div class='main-header'>
-    <span style="font-size:48px;">⚖️</span>
-    <div>
-        <h1 style="margin:0; font-size:40px; color:#0b3d91;">Nyayasetu — Legal Assistant</h1>
-        <p style="margin:0; color:rgba(255,255,255,0.8);">
-            AI-powered multilingual legal guidance (Title → Summary → Case)
-        </p>
-    </div>
+<div class='main-header' style="align-items:center; gap:12px; display:flex; justify-content:center;">
+  <span style="font-size:48px; line-height:1;">⚖️</span>
+  <div style="text-align:left;">
+    <h1 style="margin:0; font-size:40px; color:#0b3d91;">Nyayasetu — Legal Assistant</h1>
+    <p style="margin:0; color:#1a1a1a; font-size:16px; font-weight:500;">
+      AI-powered multilingual legal guidance (Title → Summary → Case)
+    </p>
+  </div>
 </div>
 <hr style="opacity:0.3;">
 """, unsafe_allow_html=True)
@@ -102,6 +102,7 @@ def load_csv_candidates():
     df_list, src, errors = [], [], []
 
     def try_read(path):
+        last_error = None
         for enc in ["utf-8", "latin1", "cp1252", "ISO-8859-1"]:
             try:
                 df = pd.read_csv(path, encoding=enc, compression="infer")
@@ -124,18 +125,18 @@ def load_csv_candidates():
     if not df_list:
         return pd.DataFrame(), [], errors
 
-    df_final = pd.concat(df_list, ignore_index=True)
-    return df_final, src, errors
+    df_final = pd.concat(df_list, ignore_index=True, sort=False)
+    return df_final.reset_index(drop=True), src, errors
 
 
 df, detected_sources, load_errors = load_csv_candidates()
 
+# If no dataset, stop (but don't show the banner)
 if not detected_sources:
-    st.error("Dataset missing. Place train.csv.gz or test.csv.gz in the folder.")
+    st.error("Dataset missing. Place train.csv.gz or test.csv.gz in the app folder.")
     st.stop()
 
-st.info(f"Loaded: {', '.join(detected_sources)} • Rows: {len(df)}")
-
+# Show load errors if any (keeps warnings)
 if load_errors:
     for e in load_errors:
         st.warning(str(e))
@@ -156,23 +157,28 @@ col_detailed = detect("Case")
 if col_query is None:
     for p in ["title", "question", "query", "subject"]:
         col_query = next((c for c in cols if p in c.lower()), None)
-        if col_query: break
+        if col_query:
+            break
 
 if col_short is None:
     for p in ["summary", "short", "answer"]:
         col_short = next((c for c in cols if p in c.lower()), None)
-        if col_short: break
+        if col_short:
+            break
 
 if col_detailed is None:
-    for p in ["case", "details", "description", "full"]:
+    for p in ["case", "details", "description", "full", "body", "text"]:
         col_detailed = next((c for c in cols if p in c.lower()), None)
-        if col_detailed: break
+        if col_detailed:
+            break
 
-if col_short is None:  col_short = col_query
-if col_detailed is None: col_detailed = col_short
+if col_short is None:
+    col_short = col_query
+if col_detailed is None:
+    col_detailed = col_short
 
 if col_query is None:
-    st.error("No Query column found (Title, Question etc.)")
+    st.error("No Query column found (Title, Question etc.). Please check your dataset.")
     st.stop()
 
 # ---------------------------------------
@@ -200,10 +206,10 @@ splitter = re.compile(r"(?<=[.!?])\s+")
 def summarize(text, n):
     if not text:
         return text
-    sentences = splitter.split(text.strip())
+    sentences = splitter.split(str(text).strip())
     if len(sentences) <= n:
-        return text
-    return " ".join(sentences[:n])
+        return " ".join(sentences).strip()
+    return " ".join(sentences[:n]).strip()
 
 # ---------------------------------------
 # TRANSLATION
@@ -212,12 +218,13 @@ def translate(text, lang):
     if not TRANSLATION_AVAILABLE or lang == "en":
         return text
     try:
-        if TRANSLATOR_TYPE == "googletrans":
+        if TRANSLATOR_TYPE == "googletrans" and translator_google is not None:
             res = translator_google.translate(text, dest=lang)
-            return res.text
-        if TRANSLATOR_TYPE == "deep":
-            return GoogleTranslator(source="auto", target=lang).translate(text)
-    except:
+            return getattr(res, "text", str(res))
+        if TRANSLATOR_TYPE == "deep" and GoogleTranslator is not None:
+            trans = GoogleTranslator(source="auto", target=lang)
+            return trans.translate(text)
+    except Exception:
         return text
     return text
 
@@ -229,7 +236,7 @@ def load_rag():
     if EMBEDDINGS_AVAILABLE:
         try:
             return SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-        except:
+        except Exception:
             return None
     return None
 
@@ -243,7 +250,7 @@ def build_embeds():
     try:
         emb = rag_model.encode(queries, show_progress_bar=False)
         return queries, emb
-    except:
+    except Exception:
         return queries, None
 
 queries_list, embeddings = build_embeds()
@@ -258,10 +265,11 @@ examples = df[col_query].dropna().astype(str).tolist()[:3]
 if examples:
     ecols = st.columns(len(examples))
     for i, ex in enumerate(examples):
-        if ecols[i].button(ex[:60] + ("..." if len(ex) > 60 else "")):
+        label = ex if len(ex) <= 60 else (ex[:57] + "...")
+        if ecols[i].button(label):
             st.session_state['q'] = ex
 
-query = st.text_input("Enter your question:", st.session_state.get("q", ""))
+query = st.text_input("Enter your question:", value=st.session_state.get("q", ""))
 
 use_rag = st.checkbox("Use RAG semantic search", value=(embeddings is not None))
 
@@ -271,7 +279,7 @@ if st.button("Get Answer"):
     else:
         with st.spinner("Searching…"):
             matched_row = None
-            confidence = 0
+            confidence = 0.0
 
             # RAG search
             if use_rag and embeddings is not None and rag_model is not None:
@@ -281,28 +289,31 @@ if st.button("Get Answer"):
                     idx = int(np.argmax(scores))
                     if scores[idx] > 0.25:
                         matched_row = df.iloc[idx]
-                        confidence = float(scores[idx]) * 100
+                        confidence = float(scores[idx]) * 100.0
                         st.success(f"RAG match ({confidence:.2f}%)")
-                except:
+                except Exception:
                     pass
 
             # Fuzzy fallback
             if matched_row is None and FUZZY_AVAILABLE:
-                best = process.extractOne(query, queries_list, scorer=fuzz.WRatio)
-                if best:
-                    txt, score, pos = best
-                    if score >= 50:
-                        matched_row = df.loc[df[col_query] == txt].iloc[0]
-                        confidence = score
-                        st.success(f"Fuzzy match ({score}%)")
+                try:
+                    best = process.extractOne(query, queries_list, scorer=fuzz.WRatio)
+                    if best:
+                        txt, score, pos = best
+                        if score >= 50:
+                            matched_row = df.loc[df[col_query].astype(str) == txt].iloc[0]
+                            confidence = float(score)
+                            st.success(f"Fuzzy match ({score:.1f}%)")
+                except Exception:
+                    pass
 
             # Final answers
             if matched_row is None:
                 short = "No relevant answer found."
                 detailed = short
             else:
-                short = str(matched_row[col_short])
-                detailed = str(matched_row[col_detailed])
+                short = str(matched_row.get(col_short, "Short answer not available"))
+                detailed = str(matched_row.get(col_detailed, short))
 
         # Summaries
         if auto_summary:
@@ -313,7 +324,7 @@ if st.button("Get Answer"):
             detailed_s = detailed
 
         # Translate short summary
-        lang = language_map[selected_language]
+        lang = language_map.get(selected_language, "en")
         short_trans = translate(short_s, lang)
         detailed_trans = translate(detailed_s, lang)
 
@@ -333,12 +344,12 @@ if st.button("Get Answer"):
 
         # TTS
         try:
-            tts = gTTS(short_trans, lang=lang)
+            tts = gTTS(text=short_trans, lang=lang)
             buf = BytesIO()
             tts.write_to_fp(buf)
             buf.seek(0)
             st.audio(buf.read(), format="audio/mp3")
-        except:
+        except Exception:
             st.warning("Audio unavailable.")
 
 # ---------------------------------------
@@ -349,7 +360,7 @@ st.markdown(
     """
     <div style="
         padding:18px;
-        background:rgba(255,255,255,0.85);
+        background:rgba(255,255,255,0.95);
         border-left:6px solid #0b3d91;
         border-radius:10px;
         margin-top:20px;
