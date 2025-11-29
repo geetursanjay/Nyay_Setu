@@ -1,245 +1,371 @@
+# nyayasetu_translated.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 from gtts import gTTS
 from io import BytesIO
-from rapidfuzz import process, fuzz
-from deep_translator import GoogleTranslator
-import requests
-from io import BytesIO
+from datetime import datetime
+import os
+import re
 
-# Set up page configuration for a wider layout
-st.set_page_config(layout="wide")
+# Optional dependencies (RAG & fuzzy)
+try:
+    from sentence_transformers import SentenceTransformer
+    EMBEDDINGS_AVAILABLE = True
+except Exception:
+    EMBEDDINGS_AVAILABLE = False
 
-# -------------------------------
-# Custom CSS for front-end styling
-# -------------------------------
+try:
+    from rapidfuzz import process, fuzz
+    FUZZY_AVAILABLE = True
+except Exception:
+    FUZZY_AVAILABLE = False
+
+# Translation libs
+TRANSLATION_AVAILABLE = False
+TRANSLATOR_TYPE = None
+translator_google = None
+GoogleTranslator = None
+
+try:
+    from googletrans import Translator as GoogleTransTranslator
+    translator_google = GoogleTransTranslator()
+    TRANSLATION_AVAILABLE = True
+    TRANSLATOR_TYPE = "googletrans"
+except Exception:
+    try:
+        from deep_translator import GoogleTranslator as DeepGoogleTranslator
+        GoogleTranslator = DeepGoogleTranslator
+        TRANSLATION_AVAILABLE = True
+        TRANSLATOR_TYPE = "deep"
+    except Exception:
+        TRANSLATION_AVAILABLE = False
+        TRANSLATOR_TYPE = None
+
+# ---------------------------------------
+# PAGE CONFIG + CSS
+# ---------------------------------------
+st.set_page_config(layout="wide", page_title="Nyayasetu — Legal Assistant")
+
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+
     .stApp {
         background-image: url("https://raw.githubusercontent.com/geetursanjay/Nyay_Setu/main/background.png");
         background-size: cover;
         background-repeat: no-repeat;
-        background-attachment: fixed;
-        background-position: center center;
     }
     .stApp::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0, 0, 0, 0.5);
-        z-index: -1;
+        content:"";
+        position:absolute;
+        top:0; left:0;
+        width:100%; height:100%;
+        background-color:rgba(0,0,0,0.45);
+        z-index:-1;
     }
     .main-header {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 15px;
-        font-family: 'Dancing Script', cursive;
-        color: darkblue;
-        text-align: center;
-    }
-    .main-header h1 {
-        font-size: 3.5rem;
-        font-weight: 700;
-        text-shadow: 2px 2px 4px #FFFFFF;
-    }
-    .main-header .symbol {
-        font-size: 3.5rem;
-        color: #FFD700;
-        text-shadow: 2px 2px 4px #000000;
-    }
-    .st-emotion-cache-1cypd85 {
-        background-color: rgba(255, 255, 255, 0.7);
-        border-radius: 10px;
-        padding: 20px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        gap:12px;
+        font-family:'Dancing+Script', cursive;
     }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
-# -------------------------------
-# Load Dataset from GitHub
-# -------------------------------
+# ---------------------------------------
+# HEADER
+# ---------------------------------------
+st.markdown("""
+<div class='main-header'>
+    <span style="font-size:48px;">⚖️</span>
+    <div>
+        <h1 style="margin:0; font-size:40px; color:#0b3d91;">Nyayasetu — Legal Assistant</h1>
+        <p style="margin:0; color:rgba(255,255,255,0.8);">
+            AI-powered multilingual legal guidance (Title → Summary → Case)
+        </p>
+    </div>
+</div>
+<hr style="opacity:0.3;">
+""", unsafe_allow_html=True)
+
+# ---------------------------------------
+# LOAD DATASET
+# ---------------------------------------
 @st.cache_data
-def load_data():
-    url = "https://github.com/geetursanjay/Nyay_Setu/raw/main/SIH_Dataset_Final.xlsx"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        df = pd.read_excel(BytesIO(response.content))
-        return df
-    except Exception as e:
-        st.error(f"Error loading dataset: {e}")
-        st.stop()
+def load_csv_candidates():
+    files = ["train.csv.gz", "test.csv.gz", "train.csv", "test.csv"]
+    df_list, src, errors = [], [], []
 
-df = load_data()
+    def try_read(path):
+        for enc in ["utf-8", "latin1", "cp1252", "ISO-8859-1"]:
+            try:
+                df = pd.read_csv(path, encoding=enc, compression="infer")
+                return df, None
+            except Exception as e:
+                last_error = e
+        return None, last_error
 
-# -------------------------------
-# Language mapping
-# -------------------------------
+    for f in files:
+        if os.path.exists(f):
+            df, err = try_read(f)
+            if df is not None:
+                df.columns = [str(c) for c in df.columns]
+                df["_source"] = f
+                df_list.append(df)
+                src.append(f)
+            else:
+                errors.append(f"{f}: {err}")
+
+    if not df_list:
+        return pd.DataFrame(), [], errors
+
+    df_final = pd.concat(df_list, ignore_index=True)
+    return df_final, src, errors
+
+
+df, detected_sources, load_errors = load_csv_candidates()
+
+if not detected_sources:
+    st.error("Dataset missing. Place train.csv.gz or test.csv.gz in the folder.")
+    st.stop()
+
+st.info(f"Loaded: {', '.join(detected_sources)} • Rows: {len(df)}")
+
+if load_errors:
+    for e in load_errors:
+        st.warning(str(e))
+
+# ---------------------------------------
+# COLUMN MAPPING (Title / Summary / Case)
+# ---------------------------------------
+cols = df.columns.tolist()
+
+def detect(colname):
+    return next((c for c in cols if c.lower() == colname.lower()), None)
+
+col_query = detect("Title")
+col_short = detect("Summary")
+col_detailed = detect("Case")
+
+# fallback heuristics
+if col_query is None:
+    for p in ["title", "question", "query", "subject"]:
+        col_query = next((c for c in cols if p in c.lower()), None)
+        if col_query: break
+
+if col_short is None:
+    for p in ["summary", "short", "answer"]:
+        col_short = next((c for c in cols if p in c.lower()), None)
+        if col_short: break
+
+if col_detailed is None:
+    for p in ["case", "details", "description", "full"]:
+        col_detailed = next((c for c in cols if p in c.lower()), None)
+        if col_detailed: break
+
+if col_short is None:  col_short = col_query
+if col_detailed is None: col_detailed = col_short
+
+if col_query is None:
+    st.error("No Query column found (Title, Question etc.)")
+    st.stop()
+
+# ---------------------------------------
+# LANGUAGE SETTINGS
+# ---------------------------------------
 language_map = {
-    "English": "en",
-    "Hindi": "hi",
-    "Bengali": "bn",
-    "Marathi": "mr",
-    "Tamil": "ta",
-    "Telugu": "te"
+    "English": "en", "Hindi": "hi", "Bengali": "bn",
+    "Tamil": "ta", "Telugu": "te", "Marathi": "mr"
 }
 
-# Initialize session state
-if 'user_question' not in st.session_state:
-    st.session_state['user_question'] = ""
+st.sidebar.subheader("Language")
+selected_language = st.sidebar.selectbox("Choose language:", list(language_map.keys()))
 
-# -------------------------------
-# App Title
-# -------------------------------
+# Summarization options
+st.sidebar.subheader("Summary Options")
+auto_summary = st.sidebar.checkbox("Auto-summarize answers", True)
+short_sentences = st.sidebar.slider("Short Answer sentences", 1, 6, 2)
+detailed_sentences = st.sidebar.slider("Detailed Summary sentences", 2, 12, 4)
+
+# ---------------------------------------
+# Sentence-based summarizer
+# ---------------------------------------
+splitter = re.compile(r"(?<=[.!?])\s+")
+
+def summarize(text, n):
+    if not text:
+        return text
+    sentences = splitter.split(text.strip())
+    if len(sentences) <= n:
+        return text
+    return " ".join(sentences[:n])
+
+# ---------------------------------------
+# TRANSLATION
+# ---------------------------------------
+def translate(text, lang):
+    if not TRANSLATION_AVAILABLE or lang == "en":
+        return text
+    try:
+        if TRANSLATOR_TYPE == "googletrans":
+            res = translator_google.translate(text, dest=lang)
+            return res.text
+        if TRANSLATOR_TYPE == "deep":
+            return GoogleTranslator(source="auto", target=lang).translate(text)
+    except:
+        return text
+    return text
+
+# ---------------------------------------
+# RAG MODEL
+# ---------------------------------------
+@st.cache_resource
+def load_rag():
+    if EMBEDDINGS_AVAILABLE:
+        try:
+            return SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        except:
+            return None
+    return None
+
+rag_model = load_rag()
+
+@st.cache_data
+def build_embeds():
+    queries = df[col_query].dropna().astype(str).tolist()
+    if rag_model is None:
+        return queries, None
+    try:
+        emb = rag_model.encode(queries, show_progress_bar=False)
+        return queries, emb
+    except:
+        return queries, None
+
+queries_list, embeddings = build_embeds()
+
+# ---------------------------------------
+# MAIN UI — SEARCH
+# ---------------------------------------
+st.markdown("### Instant Legal Guidance")
+st.markdown("Try suggested queries:")
+
+examples = df[col_query].dropna().astype(str).tolist()[:3]
+if examples:
+    ecols = st.columns(len(examples))
+    for i, ex in enumerate(examples):
+        if ecols[i].button(ex[:60] + ("..." if len(ex) > 60 else "")):
+            st.session_state['q'] = ex
+
+query = st.text_input("Enter your question:", st.session_state.get("q", ""))
+
+use_rag = st.checkbox("Use RAG semantic search", value=(embeddings is not None))
+
+if st.button("Get Answer"):
+    if not query.strip():
+        st.warning("Enter a question.")
+    else:
+        with st.spinner("Searching…"):
+            matched_row = None
+            confidence = 0
+
+            # RAG search
+            if use_rag and embeddings is not None and rag_model is not None:
+                try:
+                    q_emb = rag_model.encode([query])
+                    scores = np.dot(embeddings, q_emb.T).flatten()
+                    idx = int(np.argmax(scores))
+                    if scores[idx] > 0.25:
+                        matched_row = df.iloc[idx]
+                        confidence = float(scores[idx]) * 100
+                        st.success(f"RAG match ({confidence:.2f}%)")
+                except:
+                    pass
+
+            # Fuzzy fallback
+            if matched_row is None and FUZZY_AVAILABLE:
+                best = process.extractOne(query, queries_list, scorer=fuzz.WRatio)
+                if best:
+                    txt, score, pos = best
+                    if score >= 50:
+                        matched_row = df.loc[df[col_query] == txt].iloc[0]
+                        confidence = score
+                        st.success(f"Fuzzy match ({score}%)")
+
+            # Final answers
+            if matched_row is None:
+                short = "No relevant answer found."
+                detailed = short
+            else:
+                short = str(matched_row[col_short])
+                detailed = str(matched_row[col_detailed])
+
+        # Summaries
+        if auto_summary:
+            short_s = summarize(short, short_sentences)
+            detailed_s = summarize(detailed, detailed_sentences)
+        else:
+            short_s = short
+            detailed_s = detailed
+
+        # Translate short summary
+        lang = language_map[selected_language]
+        short_trans = translate(short_s, lang)
+        detailed_trans = translate(detailed_s, lang)
+
+        # ------------------------
+        # OUTPUT
+        # ------------------------
+        st.markdown("---")
+        st.markdown("### Short Answer")
+        st.info(short_trans)
+
+        st.markdown("### Detailed Summary")
+        with st.expander("Show summarized details"):
+            st.write(detailed_trans)
+
+        with st.expander("Full detailed case"):
+            st.write(detailed)
+
+        # TTS
+        try:
+            tts = gTTS(short_trans, lang=lang)
+            buf = BytesIO()
+            tts.write_to_fp(buf)
+            buf.seek(0)
+            st.audio(buf.read(), format="audio/mp3")
+        except:
+            st.warning("Audio unavailable.")
+
+# ---------------------------------------
+# Lawyer Assistance — Coming Soon
+# ---------------------------------------
+st.markdown("---")
 st.markdown(
     """
-    <div class="main-header">
-        <span class="symbol">⚖️</span>
-        <h1>Nyayasetu - AI Legal Consultant</h1>
+    <div style="
+        padding:18px;
+        background:rgba(255,255,255,0.85);
+        border-left:6px solid #0b3d91;
+        border-radius:10px;
+        margin-top:20px;
+    ">
+        <h3 style="margin:0; color:#0b3d91;">👨‍⚖️ Lawyer Assistance</h3>
+        <p style="margin:6px 0 0; color:#333;">
+            We are building a feature to help you connect with verified lawyers for personalised legal consultation.<br>
+            <strong>Coming soon… 🚀</strong>
+        </p>
     </div>
-    <p style='text-align:center; color: #000000; text-shadow: 1px 1px 2px #FFFFFF; font-weight: italic;;'>
-    Nyayasetu is an AI-based legal assistant that helps citizens get quick, multi-language legal guidance in simple steps. 
-    Ask your question and get structured answers based on Indian laws.</p>
     """,
     unsafe_allow_html=True
 )
+
+# ---------------------------------------
+# FOOTER
+# ---------------------------------------
 st.markdown("---")
-
-# -------------------------------
-# Sidebar for Language Selection
-# -------------------------------
-with st.sidebar:
-    st.header("Settings")
-    selected_lang_display = st.selectbox("Select language:", list(language_map.keys()))
-    st.info("Your feedback helps us improve!")
-
-selected_lang_code = language_map[selected_lang_display]
-
-# -------------------------------
-# Helper: Translate text
-# -------------------------------
-def translate_text(text, lang_code):
-    if lang_code == "en" or not text:
-        return text
-    try:
-        return GoogleTranslator(source="en", target=lang_code).translate(text)
-    except:
-        return text  # fallback to English if translation fails
-
-# -------------------------------
-# Main Content Area
-# -------------------------------
-st.markdown("### Get Legal Guidance Instantly")
-st.markdown("---")
-
-# -------------------------------
-# Example Queries
-# -------------------------------
-st.markdown("**Try one of these example questions:**")
-example_queries = df["question"].dropna().tolist()[:3]  # always from English
-example_queries_display = [
-    translate_text(q, selected_lang_code) for q in example_queries
-]
-
-cols = st.columns(len(example_queries_display))
-for i, query in enumerate(example_queries_display):
-    with cols[i]:
-        if st.button(query, key=f"example_{i}"):
-            st.session_state['user_question'] = query
-            st.rerun()
-
-# -------------------------------
-# User Input
-# -------------------------------
-input_col, button_col = st.columns([4, 1])
-
-with input_col:
-    user_question = st.text_input(
-        "Enter your question:",
-        value=st.session_state.get('user_question', ''),
-        key='user_question_input'
-    )
-
-with button_col:
-    st.markdown("<br>", unsafe_allow_html=True)
-    submitted = st.button("Get Answer")
-
-# -------------------------------
-# Fetch Answer
-# -------------------------------
-if submitted and st.session_state.get('user_question'):
-    with st.spinner("Searching for your answer..."):
-        queries = df["question"].dropna().tolist()
-
-        # If user typed in regional lang, translate back to English for matching
-        if selected_lang_code != "en":
-            try:
-                user_q_for_match = GoogleTranslator(
-                    source=selected_lang_code, target="en"
-                ).translate(st.session_state['user_question'])
-            except:
-                user_q_for_match = st.session_state['user_question']
-        else:
-            user_q_for_match = st.session_state['user_question']
-
-        best_match, score, index = process.extractOne(
-            user_q_for_match, queries, scorer=fuzz.WRatio
-        )
-
-        if score > 80:
-            matched_row = df[df["question"] == best_match].iloc[0]
-            short_answer = matched_row["answer"]
-            detailed_answer = matched_row["answer"]  # if you have long form, replace here
-
-            # Translate outputs for display
-            q_display = translate_text(best_match, selected_lang_code)
-            short_display = translate_text(short_answer, selected_lang_code)
-            detailed_display = translate_text(detailed_answer, selected_lang_code)
-
-            st.success(f"Found a match with a similarity score of {score:.2f}%.")
-
-            st.markdown(f"**Q:** {q_display}")
-            st.markdown(f"**Short Answer:** {short_display}")
-            st.markdown(f"**Detailed Answer:** {detailed_display}")
-
-            # -------------------------------
-            # Text-to-Speech
-            # -------------------------------
-            try:
-                if selected_lang_code:
-                    tts = gTTS(text=short_display, lang=selected_lang_code)
-                    audio_bytes = BytesIO()
-                    tts.write_to_fp(audio_bytes)
-                    audio_bytes.seek(0)
-                    st.audio(audio_bytes, format='audio/mp3')
-            except Exception as e:
-                st.warning(f"Audio playback not available: {e}")
-        else:
-            st.warning("❌ No close match found. Try rephrasing your query.")
-
-    # -------------------------------
-    # Feedback
-    # -------------------------------
-    st.markdown("---")
-    st.markdown("### Was this helpful?")
-    col1, col2 = st.columns([1,1])
-    with col1:
-        if st.button("👍 Yes", key="upvote"):
-            st.success("Thanks for your feedback! We'll use this to improve.")
-    with col2:
-        if st.button("👎 No", key="downvote"):
-            st.warning("We'll try to improve the accuracy of our answers.")
-
-# -------------------------------
-# Consult a Lawyer message
-# -------------------------------
-st.markdown("---")
-st.info("Consult a lawyer nearby → Coming soon 🚀")
+st.caption("⚠️ This assistant provides general legal information only. Not a substitute for professional legal advice.")
